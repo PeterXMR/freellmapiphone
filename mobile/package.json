@@ -1,0 +1,28 @@
+{
+  "name": "freellmapiphone-mobile",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "export:android": "expo export --platform android",
+    "typecheck": "tsc --noEmit",
+    "verify:portability": "tsx ./verification/verify-portability.mts"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.97.0",
+    "drizzle-orm": "^0.44.2",
+    "expo": "^53.0.0",
+    "expo-secure-store": "~14.0.0",
+    "expo-sqlite": "~15.0.0",
+    "expo-status-bar": "~2.0.0",
+    "react": "19.0.0",
+    "react-native": "0.79.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.0.0",
+    "tsx": "^4.19.4",
+    "typescript": "~5.8.3"
+  }
+}

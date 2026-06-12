@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "freellmapiphone",
+    "slug": "freellmapiphone",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "android": {
+      "package": "com.peterxmr.freellmapiphone"
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-secure-store"
+    ]
+  }
+}
