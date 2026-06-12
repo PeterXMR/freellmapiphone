@@ -82,21 +82,25 @@ Android Keystore and never touch a network.
 
 - **Phase 0 — Repo & sync skeleton** ✅
   - Tracking clone, `upstream`/`origin` remotes, `main` mirror + `mobile` branch, this doc.
-- **Phase 1 — Mobile workspace**
-  - Scaffold `mobile/` Expo app (TS); register in root workspaces; verify Metro resolves
-    `shared/` + `server/src`; add deps (`expo-sqlite`, `drizzle-orm`, `expo-secure-store`,
-    `@tanstack/react-query`, `expo-router`).
-- **Phase 2 — Platform adapters**
-  - better-sqlite3 facade over `expo-sqlite`; mobile KeyStore (`expo-secure-store`) +
-    `decrypt()` shim; port DB schema/migrations; Metro resolver aliasing
-    `db/index.js` + `lib/crypto.js`; set providers' fetch to `expo/fetch`.
-- **Phase 3 — Headless proof**
-  - Smoke test: real key → upstream router → streamed completion on-device.
-- **Phase 4 — UI (v1)**
-  - Keys/Providers, Chat (streaming + fallback), Settings; `useLiveQuery` for reactive data.
-- **Phase 5 — Harden the sync loop**
-  - CI: `git merge upstream/main` must still build mobile. `MOBILE.md` documenting
-    the adapter contracts.
+- **Phase 1 — Mobile workspace** ✅ (code) — standalone Expo app, NOT an npm workspace
+  - `mobile/` Expo app (TS), Metro `watchFolders` → repo root + `resolveRequest` alias.
+    Decision: standalone (own `node_modules`) instead of a root-`package.json` workspace,
+    so no upstream file is edited and merges stay clean.
+- **Phase 2 — Platform adapters** ✅ (code) / ⚠️ runtime build-gated
+  - better-sqlite3 facade over `expo-sqlite`; KeyStore (`expo-secure-store`) +
+    `crypto-shim`; DB schema/migrations port; Metro alias of `db/index.js` +
+    `lib/crypto.js`; providers' fetch → `expo/fetch`.
+- **Phase 3 — Headless proof** ✅ (Node) / ⚠️ on-device pending
+  - Provider + streaming portability proven in Node; facade (10/10) + schema (65/65) +
+    crypto parity verified against real better-sqlite3. Real key → router → on-device
+    stream still needs a device build.
+- **Phase 4 — UI (v1)** ✅ (code) / ⚠️ runtime build-gated
+  - Chat (streaming + fallback), Keys/Providers, Settings; bottom-tab nav.
+    Note: v1 uses raw SQL through the facade + TanStack Query for reactivity rather than
+    `drizzle-orm`/`useLiveQuery` (matches upstream's raw-SQL router; less surface to sync).
+- **Phase 5 — Harden the sync loop** — TODO
+  - Install deps on a real machine (`npx expo install --fix`), `expo export` bundle check,
+    then a device build. CI: `git merge upstream/main` must still build mobile.
 
 ## Verification boundary
 
