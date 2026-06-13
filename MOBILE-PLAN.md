@@ -65,7 +65,8 @@ trickiest piece and the main thing to validate on a real build.
 - **Streaming**: Expo SDK 52+ `expo/fetch` supports `res.body.getReader()` — the exact
   pattern in `providers/openai-compat.ts`.
 - **Monorepo**: Expo SDK 52+ auto-configures Metro for npm workspaces.
-- **Drizzle**: `drizzle-orm/expo-sqlite` + `useLiveQuery` for reactive UI.
+- **Drizzle**: `drizzle-orm/expo-sqlite` + `useLiveQuery` is *available* for reactive UI,
+  but v1 does NOT use it (see Phase 4) — it reuses upstream's raw SQL through the facade.
 
 ## Product scope (v1)
 
@@ -90,21 +91,32 @@ Android Keystore and never touch a network.
   - better-sqlite3 facade over `expo-sqlite`; KeyStore (`expo-secure-store`) +
     `crypto-shim`; DB schema/migrations port; Metro alias of `db/index.js` +
     `lib/crypto.js`; providers' fetch → `expo/fetch`.
-- **Phase 3 — Headless proof** ✅ (Node) / ⚠️ on-device pending
-  - Provider + streaming portability proven in Node; facade (10/10) + schema (65/65) +
-    crypto parity verified against real better-sqlite3. Real key → router → on-device
-    stream still needs a device build.
+- **Phase 3 — Headless proof (Node)** ✅
+  - Provider + streaming portability, facade (10/10), schema (65/65), crypto parity, and
+    the router + fallback engine (7/7) all proven in Node against real better-sqlite3.
+    (The on-device equivalent of this smoke test moves to Phase 5.)
 - **Phase 4 — UI (v1)** ✅ (code) / ⚠️ runtime build-gated
   - Chat (streaming + fallback), Keys/Providers, Settings; bottom-tab nav.
     Note: v1 uses raw SQL through the facade + TanStack Query for reactivity rather than
     `drizzle-orm`/`useLiveQuery` (matches upstream's raw-SQL router; less surface to sync).
-- **Phase 5 — Harden the sync loop** — TODO
-  - Install deps on a real machine (`npx expo install --fix`), `expo export` bundle check,
-    then a device build. CI: `git merge upstream/main` must still build mobile.
+- **Phase 5 — First device bring-up** — TODO (the riskiest, highest-value step)
+  - On a working network: `npx expo install --fix` → `expo export --platform android`
+    (device-free proof that Metro bundles the aliased upstream code) → `expo run:android`.
+  - On-device smoke test: add a real key → router picks a provider → streamed completion
+    renders (the on-device version of the Phase 3 proof). Validates the facade,
+    `expo-secure-store`, `expo/fetch` streaming, and the Metro alias for real.
+- **Phase 6 — Build & distribution** — TODO
+  - Produce an installable APK (EAS Build or local Gradle) + Android **app** signing
+    (separate keystore from the API-key store). Decide distribution (sideload / Play).
+- **Phase 7 — Harden the sync loop** — TODO (depends on Phase 6 build infra)
+  - CI: `git fetch upstream && git merge upstream/main` must still bundle + build mobile,
+    so an upstream change that breaks an adapter contract fails loudly. `MOBILE.md`
+    documenting the adapter seams for future merges.
 
 ## Verification boundary
 
-The git tracking, monorepo baseline, and code-portability claims are verifiable in a
-plain dev environment. The **runtime** behavior of the expo-sqlite facade, Metro
-aliasing, and on-device streaming can only be proven with an Android emulator/device
-build — that's the gate before Phases 2–4 can be called "done".
+Phases 0–4 are **code-complete and verified in Node** (git tracking, portability,
+facade, schema, crypto, router/fallback). What remains unproven is purely **runtime**:
+the expo-sqlite facade, Metro aliasing, `expo-secure-store`, and `expo/fetch` streaming
+on a real device. Phase 5 is that gate — until a device build passes, Phases 2 and 4
+are "done (code)" but not "done (runtime)".
