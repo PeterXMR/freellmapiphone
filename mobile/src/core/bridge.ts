@@ -45,6 +45,12 @@ import {
   PAYMENT_REQUIRED_COOLDOWN_MS,
   MODEL_FORBIDDEN_COOLDOWN_MS,
 } from '../../../server/src/services/ratelimit';
+// Dependency-light upstream lib modules (no Node/Express imports) — reused
+// directly so content normalization and tool-argument repair stay
+// single-sourced with the server.
+import { contentToString } from '../../../server/src/lib/content';
+import { repairToolArguments, toolSchemaMap } from '../../../server/src/lib/tool-args';
+import { pruneRequestAnalytics } from '../../../server/src/services/request-retention';
 
 // Error-classification helpers. proxy.ts ALSO exports these, but that module
 // top-level imports Express, zod, embeddings, and context-handoff — none of
@@ -160,28 +166,113 @@ function isAutoModel(modelId: string | undefined): boolean {
 
 // ~4 chars/token heuristic, identical to proxy.ts. Used for routing budget
 // checks and streaming token bookkeeping when the provider omits a usage block.
+// Content flattening goes through the upstream contentToString so array-of-
+// blocks message content counts the same as it does on the server.
 function estimateTokens(messages: ChatMessage[]): number {
-  return messages.reduce((sum, m) => {
-    const text = typeof m.content === 'string'
-      ? m.content
-      : Array.isArray(m.content)
-        ? m.content.map(b => (typeof b === 'string' ? b : (b?.text ?? ''))).join('')
-        : '';
-    return sum + Math.ceil(text.length / 4);
-  }, 0);
+  return messages.reduce(
+    (sum, m) => sum + Math.ceil(contentToString(m.content ?? '').length / 4),
+    0,
+  );
+}
+
+// ── Sticky sessions (mirrored from proxy.ts; keep in sync) ───────────────────
+// Track which model served each "session" (keyed off a hash of the first user
+// message) so multi-turn conversations keep hitting the same model instead of
+// ping-ponging when rankings/cooldowns shift between turns — proxy.ts: "This
+// prevents model switching mid-conversation which causes hallucination".
+// Upstream hashes with node:crypto sha1; on-device an FNV-1a hash is enough —
+// the value is only a Map key, a rare collision merely shares affinity.
+const stickySessionMap = new Map<string, { modelDbId: number; lastUsed: number }>();
+const STICKY_TTL_MS = 30 * 60 * 1000; // 30 min session TTL
+
+function fnv1a(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16) + ':' + text.length.toString(16);
+}
+
+function getSessionKey(messages: ChatMessage[], strategyKey?: string): string {
+  const firstUser = messages.find(m => m.role === 'user');
+  if (!firstUser) return '';
+  const text = contentToString(firstUser.content ?? '');
+  if (!text) return '';
+  return fnv1a(strategyKey ? `${text}::${strategyKey}` : text);
+}
+
+function getStickyModel(messages: ChatMessage[], strategyKey?: string): number | undefined {
+  const hasAssistant = messages.some(m => m.role === 'assistant');
+  if (!hasAssistant) return undefined;
+
+  const key = getSessionKey(messages, strategyKey);
+  if (!key) return undefined;
+
+  const entry = stickySessionMap.get(key);
+  if (!entry) return undefined;
+
+  if (Date.now() - entry.lastUsed > STICKY_TTL_MS) {
+    stickySessionMap.delete(key);
+    return undefined;
+  }
+  return entry.modelDbId;
+}
+
+function setStickyModel(messages: ChatMessage[], modelDbId: number, strategyKey?: string): void {
+  const key = getSessionKey(messages, strategyKey);
+  if (!key) return;
+  stickySessionMap.set(key, { modelDbId, lastUsed: Date.now() });
+}
+
+// ── Request analytics (mirrored from proxy.ts logRequest; keep in sync) ──────
+// The reused router's default 'balanced' strategy computes reliability/TTFB
+// posteriors and the monthly-token-budget headroom from `requests` rows
+// (router.ts refreshStatsCache), so every attempt must be logged on-device
+// exactly as the server logs it — otherwise routing never learns and budget
+// caps never engage.
+function logRequest(
+  platform: string,
+  modelId: string,
+  keyId: number,
+  status: string,
+  inputTokens: number,
+  outputTokens: number,
+  latencyMs: number,
+  error: string | null,
+  ttfbMs: number | null = null,
+  requestedModel: string | null = null,
+) {
+  try {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO requests (platform, model_id, key_id, status, input_tokens, output_tokens, latency_ms, error, ttfb_ms, requested_model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(platform, modelId, keyId, status, inputTokens, outputTokens, latencyMs, error, ttfbMs, requestedModel);
+    pruneRequestAnalytics({ db });
+  } catch (e) {
+    console.error('Failed to log request:', e);
+  }
 }
 
 // Resolve the routing chain (for auto requests) and the pinned-model preference
 // once, so the whole retry loop runs against a stable chain. Mirrors the
-// pre-loop setup in proxy.ts: 'auto'/'auto:<sort>' resolves a chain; an explicit
-// model id is looked up in `models` and pinned via preferredModelDbId, throwing
-// up front if the id is unknown/disabled (proxy.ts 400s in that case).
-function resolveRouting(opts: CompleteOptions): {
+// pre-loop setup in proxy.ts: 'auto'/'auto:<sort>' resolves a chain (with the
+// sticky-session model as the soft preference); an explicit model id is looked
+// up in `models` and pinned via preferredModelDbId, throwing up front if the id
+// is unknown/disabled (proxy.ts 400s in that case).
+function resolveRouting(messages: ChatMessage[], opts: CompleteOptions): {
   resolvedChain: ResolvedChain | undefined;
   preferredModel: number | undefined;
+  strategyKey: string | undefined;
 } {
   if (isAutoModel(opts.model)) {
-    return { resolvedChain: resolveRoutingChain(opts.model), preferredModel: undefined };
+    const resolvedChain = resolveRoutingChain(opts.model);
+    return {
+      resolvedChain,
+      preferredModel: getStickyModel(messages, resolvedChain.strategyKey),
+      strategyKey: resolvedChain.strategyKey,
+    };
   }
 
   const db = getDb();
@@ -195,7 +286,13 @@ function resolveRouting(opts: CompleteOptions): {
         `Use 'auto' to auto-route.`,
     );
   }
-  return { resolvedChain: undefined, preferredModel: enabled.id };
+  return { resolvedChain: undefined, preferredModel: enabled.id, strategyKey: undefined };
+}
+
+// The model id the client pinned; null for auto-routed requests. Logged with
+// every request row (proxy.ts's pinnedModelId).
+function pinnedModelId(opts: CompleteOptions): string | null {
+  return opts.model && !isAutoModel(opts.model) ? opts.model : null;
 }
 
 // Shared per-request failover bookkeeping, mirroring proxy.ts's retry loop.
@@ -255,8 +352,11 @@ export async function complete(
 ): Promise<CompleteResult> {
   if (!dbReady) db.init();
 
-  const { resolvedChain, preferredModel } = resolveRouting(opts);
-  const estimatedTotal = estimateTokens(messages) + (opts.max_tokens ?? 1000);
+  const start = Date.now();
+  const { resolvedChain, preferredModel, strategyKey } = resolveRouting(messages, opts);
+  const inputTokens = estimateTokens(messages);
+  const estimatedTotal = inputTokens + (opts.max_tokens ?? 1000);
+  const pinned = pinnedModelId(opts);
 
   const skipKeys = new Set<string>();
   const skipModels = new Set<number>();
@@ -288,9 +388,12 @@ export async function complete(
       );
 
       const msg = result.choices?.[0]?.message;
-      const text = typeof msg?.content === 'string' ? msg.content : '';
+      // Array-of-blocks content (e.g. Mistral magistral) counts as payload —
+      // proxy.ts normalizes via contentToString before its empty check (#166).
+      const text = contentToString(msg?.content ?? '');
       // Empty completion → fail over, same as proxy.ts (proxy.ts ~973-982).
       if (!text && (msg?.tool_calls?.length ?? 0) === 0) {
+        logRequest(route.platform, route.modelId, route.keyId, 'error', inputTokens, 0, Date.now() - start, 'empty completion (no content, no tool_calls)', null, pinned);
         skipKeys.add(`${route.platform}:${route.modelId}:${route.keyId}`);
         setCooldown(
           route.platform, route.modelId, route.keyId,
@@ -305,6 +408,13 @@ export async function complete(
       recordRequest(route.platform, route.modelId, route.keyId);
       recordTokens(route.platform, route.modelId, route.keyId, result.usage?.total_tokens ?? 0);
       recordSuccess(route.modelDbId);
+      setStickyModel(messages, route.modelDbId, strategyKey);
+      logRequest(
+        route.platform, route.modelId, route.keyId, 'success',
+        result.usage?.prompt_tokens ?? 0,
+        result.usage?.completion_tokens ?? 0,
+        Date.now() - start, null, null, pinned,
+      );
 
       return {
         content: text,
@@ -317,6 +427,7 @@ export async function complete(
         },
       };
     } catch (err) {
+      logRequest(route.platform, route.modelId, route.keyId, 'error', inputTokens, 0, Date.now() - start, errMsg(err) || 'unknown error', null, pinned);
       if (isRetryableError(err)) {
         onRetryableError(route, err, skipKeys, skipModels);
         lastError = err;
@@ -336,6 +447,9 @@ export interface StreamEvent {
   delta?: string;
   /** Emitted once when a model is chosen and the first byte is about to flow. */
   routedVia?: RoutedVia;
+  /** Tool calls, assembled complete from buffered deltas at stream end
+   *  (proxy.ts buffers tool_call deltas and re-emits them whole). */
+  toolCalls?: ChatMessage['tool_calls'];
   /** Emitted once at the end with the terminal finish reason. */
   done?: { finishReason: string };
 }
@@ -359,8 +473,11 @@ export async function* streamComplete(
 ): AsyncGenerator<StreamEvent> {
   if (!dbReady) db.init();
 
-  const { resolvedChain, preferredModel } = resolveRouting(opts);
-  const estimatedTotal = estimateTokens(messages) + (opts.max_tokens ?? 1000);
+  const start = Date.now();
+  const { resolvedChain, preferredModel, strategyKey } = resolveRouting(messages, opts);
+  const inputTokens = estimateTokens(messages);
+  const estimatedTotal = inputTokens + (opts.max_tokens ?? 1000);
+  const pinned = pinnedModelId(opts);
 
   const skipKeys = new Set<string>();
   const skipModels = new Set<number>();
@@ -384,10 +501,24 @@ export async function* streamComplete(
 
     // Per-attempt streaming state. `emittedPayload` is the failover boundary:
     // before the first token we can still switch models silently; after it we
-    // cannot (proxy.ts's headerSent flag).
+    // cannot (proxy.ts's headerSent flag). Tool-call deltas are BUFFERED, not
+    // emitted — they only count as payload once assembled at stream end, which
+    // matches proxy.ts (headers stay unsent during tool-call accumulation, so
+    // a dead tool-call stream can still fail over invisibly).
     let emittedPayload = false;
     let totalOutputTokens = 0;
     let upstreamFinish: string | null = null;
+    let ttfbMs: number | null = null;
+    const toolCallAcc = new Map<number, { id: string | undefined; name: string; args: string }>();
+
+    const routedViaEvent = (): StreamEvent => ({
+      routedVia: {
+        platform: route.platform,
+        modelId: route.modelId,
+        displayName: route.displayName,
+        attempts: attempt,
+      },
+    });
 
     try {
       const gen = route.provider.streamChatCompletion(
@@ -397,7 +528,6 @@ export async function* streamComplete(
         providerOptions(opts),
       );
 
-      const pending: StreamEvent[] = [];
       for await (const chunk of gen as AsyncGenerator<ChatCompletionChunk>) {
         const anyChunk = chunk as unknown as Record<string, any>;
 
@@ -412,7 +542,20 @@ export async function* streamComplete(
         if (!choice) continue;
         if (choice.finish_reason) upstreamFinish = choice.finish_reason;
 
-        const text = typeof choice.delta?.content === 'string' ? choice.delta.content : '';
+        // Buffer tool_call deltas — emitted complete + repaired at end
+        // (proxy.ts ~832-840).
+        for (const tc of choice.delta?.tool_calls ?? []) {
+          const idx = tc.index ?? 0;
+          if (!toolCallAcc.has(idx)) toolCallAcc.set(idx, { id: undefined, name: '', args: '' });
+          const acc = toolCallAcc.get(idx)!;
+          if (tc.id && !acc.id) acc.id = tc.id;
+          if (tc.function?.name) acc.name += tc.function.name;
+          if (tc.function?.arguments) acc.args += tc.function.arguments;
+        }
+
+        // Array-shaped delta content is flattened the way the server's
+        // normalizeOutboundContent does (#166).
+        const text = contentToString(choice.delta?.content ?? '');
         if (!text) continue;
 
         totalOutputTokens += Math.ceil(text.length / 4);
@@ -421,35 +564,63 @@ export async function* streamComplete(
           // First real token: commit to this model, announce the route, then
           // flush the token. After this point failover is off the table.
           emittedPayload = true;
-          yield {
-            routedVia: {
-              platform: route.platform,
-              modelId: route.modelId,
-              displayName: route.displayName,
-              attempts: attempt,
-            },
-          };
-          for (const ev of pending) yield ev;
-          pending.length = 0;
+          ttfbMs = Date.now() - start;
+          yield routedViaEvent();
         }
         yield { delta: text };
       }
 
-      // Stream ended. A stream that produced no content is an empty completion
-      // → fail over (proxy.ts ~913-919). emittedPayload === false guarantees the
-      // consumer saw nothing, so the switch is invisible.
-      if (!emittedPayload) {
-        throw new Error(`empty completion from ${route.displayName} (stream produced no content)`);
+      // Stream ended. Assemble buffered tool calls: synthesize missing ids and
+      // repair double-encoded arguments against the request's schemas, dropping
+      // calls whose args still aren't valid JSON (proxy.ts ~884-897).
+      const schemas = toolSchemaMap(opts.tools);
+      let syntheticStreamIds = 0;
+      const completedCalls = [...toolCallAcc.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, acc]) => ({
+          id: acc.id && acc.id.length > 0 ? acc.id : `call_stream_${++syntheticStreamIds}`,
+          type: 'function' as const,
+          function: { name: acc.name, arguments: repairToolArguments(acc.args || '{}', schemas.get(acc.name)) },
+        }))
+        .filter(c => { try { JSON.parse(c.function.arguments); return c.function.name.length > 0; } catch { return false; } });
+
+      // A stream that produced neither text nor tool calls is an empty
+      // completion → fail over (proxy.ts ~913-919). emittedPayload === false
+      // guarantees the consumer saw nothing, so the switch is invisible.
+      if (!emittedPayload && completedCalls.length === 0) {
+        throw new Error(`empty completion from ${route.displayName} (stream produced no content and no tool calls)`);
+      }
+
+      if (completedCalls.length > 0) {
+        if (!emittedPayload) {
+          // Tool-call-only turn: the calls are the payload — commit to this
+          // model now and announce the route before emitting them.
+          emittedPayload = true;
+          ttfbMs = Date.now() - start;
+          yield routedViaEvent();
+        }
+        totalOutputTokens += Math.ceil(
+          completedCalls.reduce((n, c) => n + c.function.arguments.length, 0) / 4,
+        );
+        yield { toolCalls: completedCalls };
       }
 
       // Success accounting — proxy.ts ~940-945.
       recordRequest(route.platform, route.modelId, route.keyId);
-      recordTokens(route.platform, route.modelId, route.keyId, estimateTokens(messages) + totalOutputTokens);
+      recordTokens(route.platform, route.modelId, route.keyId, inputTokens + totalOutputTokens);
       recordSuccess(route.modelDbId);
+      setStickyModel(messages, route.modelDbId, strategyKey);
+      logRequest(route.platform, route.modelId, route.keyId, 'success', inputTokens, totalOutputTokens, Date.now() - start, null, ttfbMs, pinned);
 
-      yield { done: { finishReason: upstreamFinish ?? 'stop' } };
+      // Terminal finish reason: calls win over a sloppy upstream 'stop';
+      // 'length'/'content_filter' survive for pure-text turns (proxy.ts ~931-936).
+      const finish = completedCalls.length > 0
+        ? 'tool_calls'
+        : (upstreamFinish && upstreamFinish !== 'tool_calls' ? upstreamFinish : 'stop');
+      yield { done: { finishReason: finish } };
       return;
     } catch (err) {
+      logRequest(route.platform, route.modelId, route.keyId, 'error', inputTokens, totalOutputTokens, Date.now() - start, errMsg(err) || 'unknown error', ttfbMs, pinned);
       if (!emittedPayload && isRetryableError(err)) {
         // Failure before any token reached the consumer → cooldown + try the
         // next model, exactly like the server's pre-header failover.

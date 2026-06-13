@@ -8,7 +8,10 @@
     "android": "expo run:android",
     "export:android": "expo export --platform android",
     "typecheck": "tsc --noEmit",
-    "verify:portability": "tsx ./verification/verify-portability.mts"
+    "verify:portability": "tsx ./verification/provider-portability.test.mts",
+    "verify:router": "tsx ./verification/router-fallback.test.mts",
+    "verify:facade": "tsx ./verification/facade.contract.mts",
+    "verify:schema": "tsx ./verification/schema.test.mts"
   },
   "dependencies": {
     "@react-navigation/bottom-tabs": "^7.2.0",

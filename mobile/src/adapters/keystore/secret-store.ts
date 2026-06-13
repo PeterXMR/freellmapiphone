@@ -8,11 +8,13 @@
 //   matching synchronous methods, so no async refactor of upstream code is needed.
 //
 // Method names (expo-secure-store ~14.0.0 / Expo SDK 53):
-//   - SecureStore.setItem(key, value, options)   -> sync, void
-//   - SecureStore.getItem(key, options)          -> sync, string | null
-//   - SecureStore.deleteItemSync(key, options)   -> sync, void
-//   (The async variants setItemAsync/getItemAsync/deleteItemAsync also exist; we
-//    deliberately use the sync ones to preserve the upstream synchronous contract.)
+//   - SecureStore.setItem(key, value, options)        -> sync, void
+//   - SecureStore.getItem(key, options)               -> sync, string | null
+//   - SecureStore.deleteItemAsync(key, options)       -> async, Promise<void>
+//   (setItemAsync/getItemAsync also exist; we use the sync variants where they
+//    exist to preserve the upstream synchronous contract. There is NO sync
+//    delete in expo-secure-store 14, so delete() fires deleteItemAsync without
+//    awaiting — eviction is best-effort cleanup, no caller needs its result.)
 //
 // Storage characteristics on Android:
 //   - Values are stored in SharedPreferences, encrypted with a key held in the
@@ -66,7 +68,12 @@ export const secretStore: SecretStore = {
   },
 
   delete(ref: string): void {
-    SecureStore.deleteItemSync(ref);
+    // expo-secure-store has no synchronous delete; fire-and-forget the async
+    // one. Failure to evict is non-fatal (the ref is already unreachable once
+    // its api_keys row is gone) but logged so it isn't silent.
+    SecureStore.deleteItemAsync(ref).catch((err: unknown) => {
+      console.warn(`SecretStore.delete: failed to evict ref "${ref}":`, err);
+    });
   },
 };
 
