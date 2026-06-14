@@ -1,17 +1,23 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, NavLink, Link, useLocation, useNavigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { Menu, Moon, Sun } from 'lucide-react'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Languages, Menu, MoreHorizontal, Moon, Sun } from 'lucide-react'
+import { buttonVariants } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { AuthGate } from '@/components/auth-gate'
+import { I18nProvider, useI18n, SUPPORTED_LOCALES, type Locale } from '@/i18n'
 import { logout } from '@/lib/api'
 import KeysPage from '@/pages/KeysPage'
 import PlaygroundPage from '@/pages/PlaygroundPage'
@@ -23,11 +29,11 @@ import PremiumPage from '@/pages/PremiumPage'
 const queryClient = new QueryClient()
 
 const navItems = [
-  { to: '/models', label: 'Models' },
-  { to: '/playground', label: 'Playground' },
-  { to: '/keys', label: 'Keys' },
-  { to: '/analytics', label: 'Analytics' },
-  { to: '/premium', label: 'Premium' },
+  { to: '/models', labelKey: 'nav.models' },
+  { to: '/playground', labelKey: 'nav.playground' },
+  { to: '/keys', labelKey: 'nav.keys' },
+  { to: '/analytics', labelKey: 'nav.analytics' },
+  { to: '/premium', labelKey: 'nav.premium' },
 ]
 
 function getPreferredDarkMode() {
@@ -74,19 +80,6 @@ function useDarkMode() {
   return { dark, toggle }
 }
 
-function DarkModeToggle({ dark, onToggle }: { dark: boolean; onToggle: () => void }) {
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={onToggle}
-      aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
-    >
-      {dark ? <Sun /> : <Moon />}
-    </Button>
-  )
-}
-
 function Brand() {
   return (
     <Link to="/" className="flex items-center gap-2 transition-opacity hover:opacity-70">
@@ -109,8 +102,33 @@ if (isDesktopApp) {
   document.documentElement.classList.add('desktop')
 }
 
+// Language picker as a dropdown submenu, shared by the desktop (⋯) and mobile
+// (☰) menus. Radio items show a check on the active locale; selecting one calls
+// setLocale, which persists and re-renders every t() synchronously.
+function LanguageSubMenu() {
+  const { locale, setLocale, t } = useI18n()
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger className="gap-2">
+        <Languages className="size-4" />
+        <span>{t('nav.language')}</span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
+        <DropdownMenuRadioGroup value={locale} onValueChange={(v) => setLocale(v as Locale)}>
+          {SUPPORTED_LOCALES.map((code) => (
+            <DropdownMenuRadioItem key={code} value={code}>
+              {t(`languages.${code}`)}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
+}
+
 function Navbar() {
   const { dark, toggle } = useDarkMode()
+  const { t } = useI18n()
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -136,7 +154,7 @@ function Navbar() {
         >
           {navItems.map((item) => (
             <NavItem key={item.to} to={item.to}>
-              {item.label}
+              {t(item.labelKey)}
             </NavItem>
           ))}
         </nav>
@@ -144,18 +162,33 @@ function Navbar() {
           className="ml-auto hidden items-center gap-1 md:flex"
           style={isDesktopApp ? ({ WebkitAppRegion: 'no-drag' } as React.CSSProperties) : undefined}
         >
-          <DarkModeToggle dark={dark} onToggle={toggle} />
-          {!isDesktopApp && (
-            <Button variant="ghost" size="sm" onClick={() => logout()}>
-              Sign out
-            </Button>
-          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className={buttonVariants({ variant: 'ghost', size: 'icon' })}
+              aria-label={t('nav.openMenu')}
+            >
+              <MoreHorizontal />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={toggle} className="justify-between">
+                <span>{t('nav.theme')}</span>
+                {dark ? <Sun /> : <Moon />}
+              </DropdownMenuItem>
+              <LanguageSubMenu />
+              {!isDesktopApp && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => logout()}>{t('nav.signOut')}</DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         <div className="ml-auto md:hidden">
           <DropdownMenu>
             <DropdownMenuTrigger
               className={buttonVariants({ variant: 'ghost', size: 'icon' })}
-              aria-label="Open navigation menu"
+              aria-label={t('nav.openMenu')}
             >
               <Menu />
             </DropdownMenuTrigger>
@@ -167,18 +200,19 @@ function Navbar() {
                     onClick={() => navigate(item.to)}
                     className={isActiveRoute(item.to) ? 'bg-accent text-accent-foreground font-medium' : undefined}
                   >
-                    {item.label}
+                    {t(item.labelKey)}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 <DropdownMenuItem onClick={toggle} className="justify-between">
-                  <span>Theme</span>
+                  <span>{t('nav.theme')}</span>
                   {dark ? <Sun /> : <Moon />}
                 </DropdownMenuItem>
+                <LanguageSubMenu />
                 {!isDesktopApp && (
-                  <DropdownMenuItem onClick={() => logout()}>Sign out</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => logout()}>{t('nav.signOut')}</DropdownMenuItem>
                 )}
               </DropdownMenuGroup>
             </DropdownMenuContent>
@@ -192,6 +226,7 @@ function Navbar() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <I18nProvider>
       <BrowserRouter basename={import.meta.env.BASE_URL}>
         <AuthGate>
           <div className={`min-h-screen ${isDesktopApp ? 'desktop-backdrop' : 'bg-background'}`}>
@@ -214,6 +249,7 @@ function App() {
           </div>
         </AuthGate>
       </BrowserRouter>
+      </I18nProvider>
     </QueryClientProvider>
   )
 }

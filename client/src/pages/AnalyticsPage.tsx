@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { PageHeader } from '@/components/page-header'
 import { Tooltip as HoverTooltip } from '@/components/tooltip'
 import { formatSqliteUtcToLocalTime } from '@/lib/utils'
+import { useI18n } from '@/i18n'
 
 type TimeRange = '24h' | '7d' | '30d'
 
@@ -48,6 +49,7 @@ const gridStyle = 'var(--border)'
 const primaryFill = 'var(--foreground)'
 
 export default function AnalyticsPage() {
+  const { t } = useI18n()
   const [range, setRange] = useState<TimeRange>('7d')
 
   const { data: summary } = useQuery({
@@ -103,27 +105,25 @@ export default function AnalyticsPage() {
   })()
   const extrapolated = spanDays < 29.5
   const savings30d = extrapolated ? baseSavings * (30 / spanDays) : baseSavings
-  const rangeLabel = range === '24h' ? '24 hours' : range === '7d' ? '7 days' : '30 days'
-  const spanLabel = spanDays >= 2 ? `${Math.round(spanDays)} days` : `${Math.max(1, Math.round(spanDays * 24))} hours`
-  const savingsHint =
-    `You actually saved $${actualSavings.toFixed(2)} over the last ${rangeLabel}. That is what the same tokens would have cost on paid APIs, priced per model. ` +
-    (extrapolated
-      ? `The number shown projects your pace from the last ${spanLabel} of data to a full 30 days.`
-      : `The number shown is your real 30-day total.`)
+  const rangeLabel = range === '24h' ? t('analytics.rangeLabel24h') : range === '7d' ? t('analytics.rangeLabel7d') : t('analytics.rangeLabel30d')
+  const spanLabel = spanDays >= 2 ? t('analytics.spanDays', { count: Math.round(spanDays) }) : t('analytics.spanHours', { count: Math.max(1, Math.round(spanDays * 24)) })
+  const savingsHint = extrapolated
+    ? t('analytics.savingsHint', { actual: actualSavings.toFixed(2), range: rangeLabel, span: spanLabel })
+    : t('analytics.savingsHintExact', { actual: actualSavings.toFixed(2), range: rangeLabel })
 
   // Pinned = the client named a specific model instead of auto-routing.
   // Honored = that model actually served it (the rest failed over).
   const pinned = summary?.pinnedRequests ?? 0
   const pinHonored = summary?.pinHonoredRequests ?? 0
   const requestsHint = pinned > 0
-    ? `${pinned} of these requests pinned a specific model by name. ${pinHonored} were served by the pinned model; ${pinned - pinHonored} failed over to a different one. The rest were auto-routed.`
-    : 'All requests in this period were auto-routed; no client pinned a specific model by name.'
+    ? t('analytics.requestsHintPinned', { pinned, honored: pinHonored, failed: pinned - pinHonored })
+    : t('analytics.requestsHintAuto')
 
   return (
     <div>
       <PageHeader
-        title="Analytics"
-        description="Request volume, latency, token usage, and failures."
+        title={t('analytics.title')}
+        description={t('analytics.description')}
         actions={
           <div className="flex gap-1 rounded-lg border p-0.5">
             {(['24h', '7d', '30d'] as TimeRange[]).map(r => (
@@ -133,7 +133,7 @@ export default function AnalyticsPage() {
                 size="xs"
                 onClick={() => setRange(r)}
               >
-                {r}
+                {t(r === '24h' ? 'analytics.range24h' : r === '7d' ? 'analytics.range7d' : 'analytics.range30d')}
               </Button>
             ))}
           </div>
@@ -143,22 +143,22 @@ export default function AnalyticsPage() {
       <div className="space-y-6">
         {/* Summary stats */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <Stat label="Requests" value={summary?.totalRequests ?? 0} hint={requestsHint} />
-          <Stat label="Success rate" value={`${summary?.successRate ?? 0}%`} />
-          <Stat label="Input tokens" value={formatTokens(summary?.totalInputTokens)} />
-          <Stat label="Output tokens" value={formatTokens(summary?.totalOutputTokens)} />
-          <Stat label="Avg latency" value={`${summary?.avgLatencyMs ?? 0} ms`} />
+          <Stat label={t('analytics.requests')} value={summary?.totalRequests ?? 0} hint={requestsHint} />
+          <Stat label={t('analytics.successRate')} value={`${summary?.successRate ?? 0}%`} />
+          <Stat label={t('analytics.inputTokens')} value={formatTokens(summary?.totalInputTokens)} />
+          <Stat label={t('analytics.outputTokens')} value={formatTokens(summary?.totalOutputTokens)} />
+          <Stat label={t('analytics.avgLatency')} value={`${summary?.avgLatencyMs ?? 0} ms`} />
           {/* Priced per request at the served model's paid-API equivalent
               rate (not a flat frontier-model rate) — see db/model-pricing.ts.
               The value is a 30-day projection; the hover hint tells the whole
               story (actual period amount + whether it was extrapolated). */}
-          <Stat label="Est. savings" value={`$${savings30d.toFixed(2)}`} hint={savingsHint} />
+          <Stat label={t('analytics.estSavings')} value={`$${savings30d.toFixed(2)}`} hint={savingsHint} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Panel title="Requests by provider">
+          <Panel title={t('analytics.requestsByProvider')}>
             {byPlatform.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No data yet</p>
+              <p className="text-sm text-muted-foreground text-center py-8">{t('common.noData')}</p>
             ) : (
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={byPlatform} margin={{ top: 6, right: 6, left: -12, bottom: 0 }}>
@@ -172,9 +172,9 @@ export default function AnalyticsPage() {
             )}
           </Panel>
 
-          <Panel title="Avg latency by provider">
+          <Panel title={t('analytics.avgLatencyByProvider')}>
             {byPlatform.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No data yet</p>
+              <p className="text-sm text-muted-foreground text-center py-8">{t('common.noData')}</p>
             ) : (
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={byPlatform} margin={{ top: 6, right: 6, left: -12, bottom: 0 }}>
@@ -182,16 +182,16 @@ export default function AnalyticsPage() {
                   <XAxis dataKey="platform" tick={axisStyle} tickLine={false} axisLine={{ stroke: gridStyle }} />
                   <YAxis unit="ms" tick={axisStyle} tickLine={false} axisLine={false} />
                   <Tooltip contentStyle={{ backgroundColor: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} />
-                  <Bar dataKey="avgLatencyMs" name="Latency (ms)" fill="var(--muted-foreground)" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="avgLatencyMs" name={t('analytics.latencyMs')} fill="var(--muted-foreground)" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
           </Panel>
 
           <div className="lg:col-span-2">
-            <Panel title="Requests over time">
+            <Panel title={t('analytics.requestsOverTime')}>
               {timeline.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">No data yet</p>
+                <p className="text-sm text-muted-foreground text-center py-8">{t('common.noData')}</p>
               ) : (
                 <ResponsiveContainer width="100%" height={240}>
                   <LineChart data={timeline} margin={{ top: 6, right: 6, left: -12, bottom: 0 }}>
@@ -200,8 +200,8 @@ export default function AnalyticsPage() {
                     <YAxis tick={axisStyle} tickLine={false} axisLine={false} />
                     <Tooltip contentStyle={{ backgroundColor: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} iconType="line" />
-                    <Line type="monotone" dataKey="successCount" name="Success" stroke={primaryFill} strokeWidth={1.5} dot={false} />
-                    <Line type="monotone" dataKey="failureCount" name="Failures" stroke="var(--destructive)" strokeWidth={1.5} dot={false} />
+                    <Line type="monotone" dataKey="successCount" name={t('common.success')} stroke={primaryFill} strokeWidth={1.5} dot={false} />
+                    <Line type="monotone" dataKey="failureCount" name={t('common.failures')} stroke="var(--destructive)" strokeWidth={1.5} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -209,23 +209,23 @@ export default function AnalyticsPage() {
           </div>
 
           <div className="lg:col-span-2">
-            <Panel title="Per-model breakdown">
+            <Panel title={t('analytics.perModelBreakdown')}>
               {byModel.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">No data yet</p>
+                <p className="text-sm text-muted-foreground text-center py-8">{t('common.noData')}</p>
               ) : (
                 <div className="max-h-[360px] overflow-y-auto -mx-4">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="pl-4">Model</TableHead>
-                        <TableHead>Provider</TableHead>
-                        <TableHead className="text-right">Requests</TableHead>
-                        <TableHead className="text-right">Pinned</TableHead>
-                        <TableHead className="text-right">Success</TableHead>
-                        <TableHead className="text-right">Latency</TableHead>
-                        <TableHead className="text-right">In tokens</TableHead>
-                        <TableHead className="text-right">Out tokens</TableHead>
-                        <TableHead className="text-right pr-4">Saved</TableHead>
+                        <TableHead className="pl-4">{t('common.model')}</TableHead>
+                        <TableHead>{t('common.provider')}</TableHead>
+                        <TableHead className="text-right">{t('analytics.requests')}</TableHead>
+                        <TableHead className="text-right">{t('analytics.pinned')}</TableHead>
+                        <TableHead className="text-right">{t('common.success')}</TableHead>
+                        <TableHead className="text-right">{t('analytics.latency')}</TableHead>
+                        <TableHead className="text-right">{t('analytics.inTokens')}</TableHead>
+                        <TableHead className="text-right">{t('analytics.outTokens')}</TableHead>
+                        <TableHead className="text-right pr-4">{t('analytics.saved')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -249,9 +249,9 @@ export default function AnalyticsPage() {
             </Panel>
           </div>
 
-          <Panel title="Errors by provider">
+          <Panel title={t('analytics.errorsByProvider')}>
             {!errorDist?.byPlatform?.length ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No errors</p>
+              <p className="text-sm text-muted-foreground text-center py-8">{t('analytics.noErrors')}</p>
             ) : (
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={errorDist.byPlatform} margin={{ top: 6, right: 6, left: -12, bottom: 0 }}>
@@ -265,17 +265,17 @@ export default function AnalyticsPage() {
             )}
           </Panel>
 
-          <Panel title="Recent errors">
+          <Panel title={t('analytics.recentErrors')}>
             {errors.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No errors</p>
+              <p className="text-sm text-muted-foreground text-center py-8">{t('analytics.noErrors')}</p>
             ) : (
               <div className="max-h-[240px] overflow-y-auto -mx-4">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="pl-4">Provider</TableHead>
-                      <TableHead>Message</TableHead>
-                      <TableHead className="text-right pr-4">Time</TableHead>
+                      <TableHead className="pl-4">{t('common.provider')}</TableHead>
+                      <TableHead>{t('analytics.message')}</TableHead>
+                      <TableHead className="text-right pr-4">{t('analytics.time')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

@@ -18,6 +18,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ChevronDown, SlidersHorizontal } from 'lucide-react'
+import { useI18n } from '@/i18n'
 import { apiFetch } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
@@ -73,20 +74,23 @@ interface RoutingData {
 // A merged row: fallback-chain metadata + live bandit scores.
 type Row = FallbackEntry & Partial<RoutingScore>
 
-const STRATEGIES: { key: RoutingStrategy; label: string; blurb: string }[] = [
-  { key: 'priority', label: 'Manual', blurb: 'Route in the exact order you set below. Drag the handles to reorder. No scoring; the chain is followed top-to-bottom.' },
-  { key: 'balanced', label: 'Balanced', blurb: 'Reliability leads (50%), with speed and intelligence weighted equally (25% each). A sensible all-round default.' },
-  { key: 'smartest', label: 'Smartest', blurb: 'Prefer the most capable model that still works. Intelligence 55%, reliability 35%, speed 10%.' },
-  { key: 'fastest', label: 'Fastest', blurb: 'Prefer the fastest model that still works. Speed 55%, reliability 35%, intelligence 10%.' },
-  { key: 'reliable', label: 'Most reliable', blurb: 'Maximize success rate above all. Reliability 70%, speed and intelligence 15% each.' },
-  { key: 'custom', label: 'Custom', blurb: 'Set your own balance of reliability, speed and intelligence with sliders. Same engine as the presets, just your weights.' },
+// `tKey` is the i18n suffix under `strategies.*` (label) and `strategies.*Blurb`.
+// It differs from the routing `key` for Manual, whose strategy id is 'priority'.
+const STRATEGIES: { key: RoutingStrategy; tKey: string }[] = [
+  { key: 'priority', tKey: 'manual' },
+  { key: 'balanced', tKey: 'balanced' },
+  { key: 'smartest', tKey: 'smartest' },
+  { key: 'fastest', tKey: 'fastest' },
+  { key: 'reliable', tKey: 'reliable' },
+  { key: 'custom', tKey: 'custom' },
 ]
 
 // Slider axes share the colors used by the score table columns below.
-const WEIGHT_AXES: { key: keyof RoutingWeights; label: string; color: string }[] = [
-  { key: 'reliability', label: 'Reliability', color: '#22c55e' },
-  { key: 'speed', label: 'Speed', color: '#3b82f6' },
-  { key: 'intelligence', label: 'Intelligence', color: '#a855f7' },
+// `tKey` is the i18n suffix under `strategies.weight*`.
+const WEIGHT_AXES: { key: keyof RoutingWeights; tKey: string; color: string }[] = [
+  { key: 'reliability', tKey: 'weightReliability', color: '#22c55e' },
+  { key: 'speed', tKey: 'weightSpeed', color: '#3b82f6' },
+  { key: 'intelligence', tKey: 'weightIntelligence', color: '#a855f7' },
 ]
 
 // Slider popover for the 'custom' strategy. Sliders are independent (0-100)
@@ -97,14 +101,19 @@ function CustomWeightsPopover({ saved, onSave, saving }: {
   onSave: (w: RoutingWeights) => void
   saving: boolean
 }) {
+  const { t } = useI18n()
   const [values, setValues] = useState<RoutingWeights>(() => fromSaved(saved))
   const [dirty, setDirty] = useState(false)
 
-  function fromSaved(w: RoutingWeights): RoutingWeights {
+  // Defensive: an older/partial server response (or a future field rename) could
+  // leave `saved` undefined; never let that white-screen the whole page (there's
+  // no error boundary above us). Fall back to an even split.
+  function fromSaved(w?: RoutingWeights): RoutingWeights {
+    const safe = w ?? { reliability: 1 / 3, speed: 1 / 3, intelligence: 1 / 3 }
     return {
-      reliability: Math.round(w.reliability * 100),
-      speed: Math.round(w.speed * 100),
-      intelligence: Math.round(w.intelligence * 100),
+      reliability: Math.round(safe.reliability * 100),
+      speed: Math.round(safe.speed * 100),
+      intelligence: Math.round(safe.intelligence * 100),
     }
   }
 
@@ -129,24 +138,25 @@ function CustomWeightsPopover({ saved, onSave, saving }: {
     <Popover onOpenChange={open => { if (open) { setValues(fromSaved(saved)); setDirty(false) } }}>
       <PopoverTrigger className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
         <SlidersHorizontal className="size-3.5" />
-        Adjust
+        {t('strategies.adjust')}
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80">
         <div className="space-y-4">
           <div>
-            <h3 className="text-sm font-medium">Custom weights</h3>
+            <h3 className="text-sm font-medium">{t('strategies.customWeights')}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Sliders are independent; shares auto-balance to 100%.
+              {t('strategies.customWeightsHelp')}
             </p>
           </div>
           {WEIGHT_AXES.map(axis => {
             const share = sum > 0 ? Math.round((values[axis.key] / sum) * 100) : 0
+            const axisLabel = t(`strategies.${axis.tKey}`)
             return (
               <div key={axis.key}>
                 <div className="mb-1 flex items-baseline justify-between text-xs">
                   <span className="inline-flex items-center gap-1.5">
                     <span className="size-2 rounded-sm" style={{ background: axis.color }} />
-                    {axis.label}
+                    {axisLabel}
                   </span>
                   <span className="tabular-nums text-muted-foreground">{share}%</span>
                 </div>
@@ -159,14 +169,14 @@ function CustomWeightsPopover({ saved, onSave, saving }: {
                   onChange={e => update(axis.key, Number(e.target.value))}
                   className="w-full cursor-pointer"
                   style={{ accentColor: axis.color }}
-                  aria-label={`${axis.label} weight`}
+                  aria-label={`${axisLabel} weight`}
                 />
               </div>
             )
           })}
           {sum <= 0 && (
             <p className="text-xs text-amber-600 dark:text-amber-500">
-              At least one weight must be above zero.
+              {t('strategies.weightRequired')}
             </p>
           )}
           <Button
@@ -175,7 +185,7 @@ function CustomWeightsPopover({ saved, onSave, saving }: {
             disabled={!dirty || sum <= 0 || saving}
             onClick={apply}
           >
-            {saving ? 'Applying…' : dirty ? 'Apply' : 'Applied'}
+            {saving ? t('common.applying') : dirty ? t('common.apply') : t('common.applied')}
           </Button>
         </div>
       </PopoverContent>
@@ -233,6 +243,7 @@ function AxisBar({ value, color }: { value: number | undefined; color: string })
 const LEGEND_COLLAPSED_PX = 126
 
 function TokenUsageBar({ data }: { data: TokenUsageData }) {
+  const { t } = useI18n()
   const { totalBudget, totalUsed, models } = data
   const remaining = Math.max(0, totalBudget - totalUsed)
   const remainingPct = totalBudget > 0 ? Math.round((remaining / totalBudget) * 100) : 0
@@ -263,11 +274,11 @@ function TokenUsageBar({ data }: { data: TokenUsageData }) {
   return (
     <section className="rounded-3xl border bg-card p-5">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-sm font-medium">Monthly token budget</h2>
+        <h2 className="text-sm font-medium">{t('models.monthlyTokenBudget')}</h2>
         <span className="text-xs text-muted-foreground tabular-nums">
-          <span className="text-foreground font-medium">{formatTokens(remaining)}</span> remaining
+          <span className="text-foreground font-medium">{formatTokens(remaining)}</span> {t('models.remaining')}
           <span className="mx-1.5">·</span>
-          {remainingPct}% of {formatTokens(totalBudget)}
+          {remainingPct}% {t('models.of')} {formatTokens(totalBudget)}
         </span>
       </div>
 
@@ -316,7 +327,7 @@ function TokenUsageBar({ data }: { data: TokenUsageData }) {
           onClick={() => setExpanded(e => !e)}
           className="mt-2 flex w-full items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
-          {expanded ? 'Show less' : `Show all ${models.length} models`}
+          {expanded ? t('models.showLess') : t('models.showAllModels', { count: models.length })}
           <ChevronDown className={`size-3.5 transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`} />
         </button>
       )}
@@ -338,6 +349,7 @@ function RowContent({
   dragHandle?: ReactNode
   onToggle: (modelDbId: number, enabled: boolean) => void
 }) {
+  const { t } = useI18n()
   const guard = (row.headroom ?? 1) * (row.rateLimit ?? 1)
   return (
     <>
@@ -351,31 +363,31 @@ function RowContent({
           <span className="text-xs text-muted-foreground">{row.platform}</span>
           {row.supportsVision && (
             <span
-              title="Accepts image input"
+              title={t('models.visionTitle')}
               className="text-[10px] rounded-full px-1.5 py-0.5 bg-cyan-600/15 text-cyan-700 dark:bg-cyan-400/15 dark:text-cyan-400"
             >
-              Vision
+              {t('models.vision')}
             </span>
           )}
           {row.supportsTools && (
             <span
-              title="Emits structured tool calls, so it is eligible for tool-bearing requests"
+              title={t('models.toolsTitle')}
               className="text-[10px] rounded-full px-1.5 py-0.5 bg-violet-600/15 text-violet-700 dark:bg-violet-400/15 dark:text-violet-400"
             >
-              Tools
+              {t('models.tools')}
             </span>
           )}
           {(row.penalty ?? 0) > 0 && (
-            <span className="text-[10px] text-amber-600 dark:text-amber-400">−{row.penalty} penalty</span>
+            <span className="text-[10px] text-amber-600 dark:text-amber-400">{t('models.penalty', { value: row.penalty })}</span>
           )}
           {row.totalRequests !== undefined && row.totalRequests > 0 && (
-            <span className="text-[10px] text-muted-foreground/60 tabular-nums">{row.totalRequests} obs</span>
+            <span className="text-[10px] text-muted-foreground/60 tabular-nums">{t('models.obs', { count: row.totalRequests })}</span>
           )}
         </div>
         <div className="text-[11px] text-muted-foreground/70 tabular-nums mt-0.5">
-          {row.monthlyTokenBudget} tok/mo
-          {row.rpmLimit ? ` · ${row.rpmLimit} rpm` : ''}
-          {row.rpdLimit ? ` · ${row.rpdLimit} rpd` : ''}
+          {t('models.tokPerMonth', { count: row.monthlyTokenBudget })}
+          {row.rpmLimit ? ` · ${t('models.rpmLimit', { count: row.rpmLimit })}` : ''}
+          {row.rpdLimit ? ` · ${t('models.rpdLimit', { count: row.rpdLimit })}` : ''}
         </div>
       </td>
       <td className="py-2 pr-3 align-middle"><AxisBar value={row.reliability} color="#22c55e" /></td>
@@ -395,13 +407,14 @@ function RowContent({
 }
 
 function SortableRow({ row, rank, onToggle }: { row: Row; rank: number; onToggle: (id: number, e: boolean) => void }) {
+  const { t } = useI18n()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.modelDbId })
   const handle = (
     <button
       {...attributes}
       {...listeners}
       className="cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-foreground transition-colors"
-      aria-label="Drag to reorder"
+      aria-label={t('models.dragToReorder')}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
         <circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" />
@@ -422,6 +435,7 @@ function SortableRow({ row, rank, onToggle }: { row: Row; rank: number; onToggle
 }
 
 export default function FallbackPage() {
+  const { t } = useI18n()
   const queryClient = useQueryClient()
   const [localEntries, setLocalEntries] = useState<FallbackEntry[] | null>(null)
 
@@ -507,27 +521,27 @@ export default function FallbackPage() {
       <tr className="text-left text-muted-foreground border-b">
         <th className="py-2 pl-3 pr-1 w-6"></th>
         <th className="py-2 pr-2 w-6 text-center font-medium">#</th>
-        <th className="py-2 pr-3 font-medium">Model</th>
+        <th className="py-2 pr-3 font-medium">{t('models.columnModel')}</th>
         <th className="py-2 pr-3 font-medium">
-          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: '#22c55e' }} />Reliability</span>
+          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: '#22c55e' }} />{t('strategies.weightReliability')}</span>
         </th>
         <th className="py-2 pr-3 font-medium">
-          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: '#3b82f6' }} />Speed</span>
+          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: '#3b82f6' }} />{t('strategies.weightSpeed')}</span>
         </th>
         <th className="py-2 pr-3 font-medium">
-          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: '#a855f7' }} />Intelligence</span>
+          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: '#a855f7' }} />{t('strategies.weightIntelligence')}</span>
         </th>
         <th className="py-2 pr-3 font-medium">
-          <Tooltip text="Always-on guardrails: free-quota headroom × live rate-limit penalty. Below 1.0 means the model is being held back.">
-            <span className="underline decoration-dotted underline-offset-2 cursor-help">Guardrails</span>
+          <Tooltip text={t('strategies.guardrailsTooltip')}>
+            <span className="underline decoration-dotted underline-offset-2 cursor-help">{t('strategies.guardrails')}</span>
           </Tooltip>
         </th>
         <th className="py-2 pr-3 font-medium text-right">
-          <Tooltip text="Final routing score = weighted average of the three axes, multiplied by the guardrails. Higher routes first.">
-            <span className="underline decoration-dotted underline-offset-2 cursor-help">Score</span>
+          <Tooltip text={t('strategies.scoreTooltip')}>
+            <span className="underline decoration-dotted underline-offset-2 cursor-help">{t('strategies.scoreColumn')}</span>
           </Tooltip>
         </th>
-        <th className="py-2 pr-3 font-medium text-right">On</th>
+        <th className="py-2 pr-3 font-medium text-right">{t('models.columnOn')}</th>
       </tr>
     </thead>
   )
@@ -535,8 +549,8 @@ export default function FallbackPage() {
   return (
     <div>
       <PageHeader
-        title="Models"
-        description="Pick a routing strategy. In Manual mode you drag to set the order; the other strategies route by live score across reliability, speed and intelligence."
+        title={t('models.title')}
+        description={t('strategies.description')}
         divider={false}
         actions={<ModelsTabs />}
       />
@@ -548,19 +562,21 @@ export default function FallbackPage() {
         {/* Strategy selector */}
         <section className="rounded-3xl border bg-card p-5">
           <div className="flex items-baseline justify-between mb-3">
-            <h2 className="text-sm font-medium">Routing strategy</h2>
+            <h2 className="text-sm font-medium">{t('strategies.title')}</h2>
             {routing?.weights && (
               <span className="text-xs text-muted-foreground tabular-nums">
-                reliability {Math.round(routing.weights.reliability * 100)}% ·
-                {' '}speed {Math.round(routing.weights.speed * 100)}% ·
-                {' '}intelligence {Math.round(routing.weights.intelligence * 100)}%
+                {t('strategies.weightsSummary', {
+                  reliability: Math.round(routing.weights.reliability * 100),
+                  speed: Math.round(routing.weights.speed * 100),
+                  intelligence: Math.round(routing.weights.intelligence * 100),
+                })}
               </span>
             )}
           </div>
 
           <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border p-1">
             {STRATEGIES.map(s => (
-              <Tooltip key={s.key} text={s.blurb}>
+              <Tooltip key={s.key} text={t(`strategies.${s.tKey}Blurb`)}>
                 <button
                   disabled={strategyMutation.isPending}
                   onClick={() => strategyMutation.mutate({ strategy: s.key })}
@@ -570,7 +586,7 @@ export default function FallbackPage() {
                       : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                   }`}
                 >
-                  {s.label}
+                  {t(`strategies.${s.tKey}`)}
                 </button>
               </Tooltip>
             ))}
@@ -584,19 +600,17 @@ export default function FallbackPage() {
           </div>
 
           <p className="mt-2 text-xs text-muted-foreground">
-            {isManual
-              ? 'Manual mode: requests follow the order below, top-to-bottom. Drag to reorder.'
-              : 'Scores update from live traffic. The order below is how requests are routed right now.'}
+            {isManual ? t('strategies.modeManualHint') : t('strategies.modeScoreHint')}
           </p>
         </section>
 
         {/* Unified routing / fallback table */}
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
         ) : ordered.length === 0 ? (
           <div className="rounded-3xl border border-dashed p-8 text-center">
             <p className="text-sm text-muted-foreground">
-              No models available. Add API keys on the <a href="/keys" className="underline text-foreground">Keys page</a> first.
+              {t('models.noModelsBefore')}<a href="/keys" className="underline text-foreground">{t('models.keysPageLink')}</a>{t('models.noModelsAfter')}
             </p>
           </div>
         ) : (
@@ -636,15 +650,15 @@ export default function FallbackPage() {
             {/* Floating action bar — fixed to the viewport so it's always visible,
                 sliding up when there are unsaved changes and back down on save/discard. */}
             <FloatingBar show={hasChanges}>
-              <span className="text-xs text-muted-foreground">Unsaved changes</span>
-              <Button variant="outline" size="sm" onClick={() => setLocalEntries(null)}>Discard</Button>
+              <span className="text-xs text-muted-foreground">{t('common.unsavedChanges')}</span>
+              <Button variant="outline" size="sm" onClick={() => setLocalEntries(null)}>{t('common.discard')}</Button>
               <Button size="sm" onClick={handleSave} disabled={saveMutation.isPending}>
-                {saveMutation.isPending ? 'Saving…' : 'Save changes'}
+                {saveMutation.isPending ? t('common.saving') : t('common.saveChanges')}
               </Button>
             </FloatingBar>
 
             {unconfiguredPlatforms.length > 0 && (
-              <p className="text-xs text-muted-foreground">Hidden (no keys): {unconfiguredPlatforms.join(', ')}</p>
+              <p className="text-xs text-muted-foreground">{t('models.hiddenNoKeys', { platforms: unconfiguredPlatforms.join(', ') })}</p>
             )}
           </>
         )}

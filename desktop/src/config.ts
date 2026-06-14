@@ -5,6 +5,8 @@ import { app } from 'electron';
 export interface DesktopConfig {
   port?: number;
   theme?: 'dark' | 'light';
+  // BCP-47 locale mirrored from the dashboard (en, zh-CN, fr, es, pt-BR).
+  locale?: string;
 }
 
 function configPath(): string {
