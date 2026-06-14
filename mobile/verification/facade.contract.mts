@@ -33,13 +33,13 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
-// better-sqlite3 lives in the SIBLING repo's node_modules, not the phone repo.
-// ESM bare-import resolution won't reach across repos (and NODE_PATH doesn't
-// apply to ESM), so resolve it explicitly via a require rooted at the sibling.
-// This keeps the documented run command working unchanged:
-//   cd /Users/accountname/Documents/projects/freellmapi && npx tsx <this file>
-const siblingRequire = createRequire('/Users/accountname/Documents/projects/freellmapi/package.json');
-const Database = siblingRequire('better-sqlite3') as typeof import('better-sqlite3');
+// better-sqlite3 is the test oracle the facade is verified against (not an app
+// dependency — the app imports it as a type only). Resolve it from THIS file's
+// location, walking up to the nearest node_modules that has it: the repo-root
+// workspace install (CI: `npm install` at root; the server workspace declares
+// it), or the gitignored `../freellmapi/node_modules` symlink in local dev.
+const localRequire = createRequire(import.meta.url);
+const Database = localRequire('better-sqlite3') as typeof import('better-sqlite3');
 type Database = import('better-sqlite3').Database;
 import { createFacade } from '../src/adapters/sqlite/facade.ts';
 import type {

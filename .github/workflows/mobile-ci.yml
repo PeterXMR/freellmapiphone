@@ -1,0 +1,107 @@
+# Phase 7 — mobile sync-loop gate.
+#
+# This workflow exists to make the central risk of this tracking repo fail
+# LOUDLY: an upstream change (new provider, refactor, moved file) that quietly
+# breaks one of the mobile adapter seams. See ../../MOBILE.md for the seam map.
+#
+# It is a NEW file in .github/workflows/ — it never edits the upstream
+# `ci.yml`/`docker.yml`, so `git merge upstream/main` stays conflict-free.
+#
+# The authoritative check is `expo export`: a real Metro bundle that runs the
+# custom resolver (metro.config.js) against the live upstream source. A renamed
+# or moved upstream module that the resolver aliases (db/index, lib/crypto,
+# lib/proxy) makes the bundle fail here instead of on a user's device.
+#
+# tsc is deliberately NOT a gate: the reused upstream files import Node-only
+# packages (undici, socks-proxy-agent) that the app shims away, so a strict
+# typecheck is noisy by construction. The bundle + Node verification suites are
+# the real contracts. See MOBILE.md → "Why tsc is not the gate".
+name: mobile-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - 'server/**'
+      - 'shared/**'
+      - '.github/workflows/mobile-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - 'server/**'
+      - 'shared/**'
+      - '.github/workflows/mobile-ci.yml'
+
+jobs:
+  mobile-bundle-and-verify:
+    name: Bundle + verify adapters
+    runs-on: ubuntu-latest
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
+
+      # Upstream workspace deps (server/client/shared) — same install upstream's
+      # own ci.yml runs. This is what the Node verification suites need: they
+      # import the reused `server/src` code, whose `db/index.ts` imports
+      # `better-sqlite3` (the expo-sqlite facade's test oracle) resolved from the
+      # repo-root node_modules — NOT from mobile/. The server workspace already
+      # declares better-sqlite3, tsx, undici and socks-proxy-agent, so no extra
+      # install is needed. (better-sqlite3 is a type-only import in the app, so
+      # it never enters the Metro bundle.)
+      - name: Install upstream workspace deps (verification oracle)
+        run: npm install
+
+      # The app's own dependencies, for the Metro bundle. (No Android SDK / JDK
+      # needed — `expo export` emits the JS/Hermes bundle, where every seam lives.)
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm install
+
+      # Node-only proof that the reused upstream logic still behaves: provider
+      # streaming portability, the router/fallback engine, the better-sqlite3
+      # facade contract, the schema/migrations, and crypto parity. These import
+      # this repo's OWN vendored server/src + mobile/src — an upstream change
+      # that alters a contract turns one of these red.
+      - name: Verify provider portability
+        working-directory: mobile
+        env: { DEV_MODE: 'true', NODE_ENV: 'test' }
+        run: npm run verify:portability
+
+      - name: Verify router + fallback engine
+        working-directory: mobile
+        env: { DEV_MODE: 'true', NODE_ENV: 'test' }
+        run: npm run verify:router
+
+      - name: Verify expo-sqlite facade contract
+        working-directory: mobile
+        env: { DEV_MODE: 'true', NODE_ENV: 'test' }
+        run: npm run verify:facade
+
+      - name: Verify schema + migrations
+        working-directory: mobile
+        env: { DEV_MODE: 'true', NODE_ENV: 'test' }
+        run: npm run verify:schema
+
+      - name: Verify crypto-shim parity
+        working-directory: mobile
+        env: { DEV_MODE: 'true', NODE_ENV: 'test' }
+        run: npx tsx src/adapters/keystore/crypto-shim.check.mts
+
+      # THE GATE. Real Metro bundle through the custom resolver against live
+      # upstream source. If an upstream rename/move breaks a Metro alias or the
+      # NodeNext .js→.ts rewrite, the bundle fails here.
+      - name: Bundle the app (Metro / expo export)
+        working-directory: mobile
+        run: npx expo export --platform android
