@@ -17,11 +17,34 @@ const repoRoot = path.resolve(projectRoot, '..');
 // end in db/index or lib/crypto — including node_modules internals and future
 // mobile-local files.
 const upstreamSrcRoot = path.join(repoRoot, 'server', 'src') + path.sep;
+// The reused upstream TS source (server/src + shared) is authored in NodeNext
+// ESM style: every relative import carries an explicit `.js` extension that is
+// understood to map to the `.ts` source on disk (e.g. `../providers/index.js`
+// → `providers/index.ts`). Node + tsx perform that rewrite; Metro does NOT, so
+// without help every internal upstream import fails to resolve. We strip the
+// `.js` for relative imports ORIGINATING in these roots and let Metro re-resolve
+// via sourceExts (.ts/.tsx). Scoped to these roots so genuine `.js` files in
+// node_modules are never touched.
+const upstreamCodeRoots = [
+  path.join(repoRoot, 'server', 'src') + path.sep,
+  path.join(repoRoot, 'shared') + path.sep,
+];
+function isUpstreamOrigin(originModulePath) {
+  return !!originModulePath && upstreamCodeRoots.some(root => originModulePath.startsWith(root));
+}
 
 const config = getDefaultConfig(projectRoot);
 
 config.watchFolders = [repoRoot];
-config.resolver.nodeModulesPaths = [path.resolve(projectRoot, 'node_modules')];
+// Metro needs both the mobile app's node_modules AND react-native's nested
+// node_modules — RN ships some of its own runtime deps (@react-native/
+// virtualized-lists, etc.) inside its package rather than hoisted. With
+// disableHierarchicalLookup=true these would otherwise be unresolvable, since
+// the flag turns off the standard parent-walk that normally finds them.
+config.resolver.nodeModulesPaths = [
+  path.resolve(projectRoot, 'node_modules'),
+  path.resolve(projectRoot, 'node_modules/react-native/node_modules'),
+];
 config.resolver.disableHierarchicalLookup = true;
 
 // Alias targets — these files are provided by the mobile adapters (see agents).
@@ -50,6 +73,17 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     if (target) {
       return { type: 'sourceFile', filePath: target };
     }
+  }
+  // NodeNext `.js` → `.ts` rewrite for upstream-origin relative imports (see
+  // upstreamCodeRoots above). Done AFTER the redirect check so the shimmed
+  // modules still win, and only for relative specifiers so bare package names
+  // are untouched.
+  if (
+    isUpstreamOrigin(context.originModulePath) &&
+    /^\.\.?\//.test(moduleName) &&
+    moduleName.endsWith('.js')
+  ) {
+    moduleName = moduleName.slice(0, -'.js'.length);
   }
   if (defaultResolveRequest) {
     return defaultResolveRequest(context, moduleName, platform);
