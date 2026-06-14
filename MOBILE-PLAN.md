@@ -117,10 +117,18 @@ Android Keystore and never touch a network.
     `expo-secure-store` Android Keystore that holds API keys.
   - Distribution: **sideload** the universal APK (`adb install -r …/app-release.apk`); Play
     `.aab` deferred (YAGNI for v1). See `mobile/docs/BUILD.md`.
-- **Phase 7 — Harden the sync loop** — TODO (depends on Phase 6 build infra)
-  - CI: `git fetch upstream && git merge upstream/main` must still bundle + build mobile,
-    so an upstream change that breaks an adapter contract fails loudly. `MOBILE.md`
-    documenting the adapter seams for future merges.
+- **Phase 7 — Harden the sync loop** ✅
+  - Two CI workflows (both *new* files → upstream `ci.yml`/`docker.yml` untouched → merges
+    stay clean): `mobile-ci.yml` gates every push/PR touching `mobile/`/`server/`/`shared/`
+    (install → 5 Node verify checks → `expo export`), and `mobile-upstream-sync.yml` runs
+    weekly/on-demand to `git merge upstream/main` and bundle+verify the *merged* tree,
+    opening a tracking issue if the merge conflicts or an adapter contract breaks.
+  - The authoritative gate is `expo export` (a real Metro bundle through the custom
+    resolver against live upstream source) — `tsc` is deliberately not a gate because it
+    type-checks shimmed-away upstream files that import Node-only deps (`undici`,
+    `socks-proxy-agent`). `better-sqlite3` is installed ephemerally in CI as the facade's
+    test oracle (not an app dependency). `MOBILE.md` documents all seven adapter seams,
+    the merge runbook, and why `tsc` isn't the gate.
 
 ## Verification boundary
 

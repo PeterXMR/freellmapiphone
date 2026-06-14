@@ -1,0 +1,122 @@
+# Phase 7 — proactive upstream-sync probe.
+#
+# mobile-ci.yml guards changes that land in THIS repo. This workflow guards the
+# other direction: a change that lands UPSTREAM (tashfeenahmed/freellmapi) and
+# would break the next `git merge upstream/main`. It runs on a schedule so the
+# breakage is found in CI, on its own time, instead of the next time a human
+# tries to sync.
+#
+# It performs the real sync the maintainer would: fetch upstream, merge
+# upstream/main, then bundle + verify the MERGED tree. Two ways it fails loudly:
+#   1. the merge conflicts  → the "we never edit upstream files" invariant broke
+#   2. the merge is clean but the bundle/verify fails → an upstream change broke
+#      an adapter contract (a Metro alias target moved, a facade assumption,
+#      a provider/router shape, …). See ../../MOBILE.md.
+# On failure it opens (or updates) a tracking issue.
+#
+# New file → does not touch upstream `ci.yml`/`docker.yml` → merges stay clean.
+name: mobile-upstream-sync
+
+on:
+  schedule:
+    # Mondays 06:00 UTC — once a week is plenty; upstream merges are batched.
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {} # run on demand before doing a real sync
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  upstream-merge-probe:
+    name: Merge upstream + bundle/verify
+    runs-on: ubuntu-latest
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the merge has a real base
+
+      - name: Merge upstream/main
+        id: merge
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/tashfeenahmed/freellmapi.git 2>/dev/null \
+            || git remote set-url upstream https://github.com/tashfeenahmed/freellmapi.git
+          git fetch --no-tags upstream main
+          echo "Merging $(git rev-parse --short upstream/main) into $(git rev-parse --abbrev-ref HEAD)…"
+          if ! git merge --no-edit --no-ff upstream/main; then
+            git merge --abort || true
+            echo "::error::git merge upstream/main CONFLICTS — the clean-merge invariant is broken. A mobile change must have touched an upstream file, or upstream moved one we depend on. See MOBILE.md."
+            exit 1
+          fi
+          echo "Merge is clean."
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm install
+
+      - name: Install verification oracle (better-sqlite3)
+        working-directory: mobile
+        run: npm install --no-save better-sqlite3@12
+
+      - name: Verify provider portability
+        working-directory: mobile
+        env: { DEV_MODE: 'true', NODE_ENV: 'test' }
+        run: npm run verify:portability
+
+      - name: Verify router + fallback engine
+        working-directory: mobile
+        env: { DEV_MODE: 'true', NODE_ENV: 'test' }
+        run: npm run verify:router
+
+      - name: Verify expo-sqlite facade contract
+        working-directory: mobile
+        env: { DEV_MODE: 'true', NODE_ENV: 'test' }
+        run: npm run verify:facade
+
+      - name: Verify schema + migrations
+        working-directory: mobile
+        env: { DEV_MODE: 'true', NODE_ENV: 'test' }
+        run: npm run verify:schema
+
+      - name: Verify crypto-shim parity
+        working-directory: mobile
+        env: { DEV_MODE: 'true', NODE_ENV: 'test' }
+        run: npx tsx src/adapters/keystore/crypto-shim.check.mts
+
+      - name: Bundle the merged tree (Metro / expo export)
+        working-directory: mobile
+        run: npx expo export --platform android
+
+      # Fail loudly: surface the break as a tracking issue (deduped by title).
+      - name: Open/refresh tracking issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MERGE_OUTCOME: ${{ steps.merge.outcome }}
+        run: |
+          if [ "$MERGE_OUTCOME" = "failure" ]; then
+            REASON="**git merge upstream/main conflicted** — the clean-merge invariant is broken (a mobile change touched an upstream file, or upstream moved a file an adapter depends on)."
+          else
+            REASON="**The merge was clean but the merged tree failed to bundle/verify** — an upstream change broke an adapter contract. Check which step went red (a Metro alias target moved, the facade/schema/router contract shifted, …)."
+          fi
+          TITLE='⚠️ Upstream sync probe failing'
+          BODY="$(printf '%s\n\nRun: %s\n\nRunbook: see MOBILE.md → "Merge runbook" and "Adapter seams".\n\n_Opened automatically by mobile-upstream-sync.yml._' "$REASON" "$RUN_URL")"
+          EXISTING="$(gh issue list --state open --search "in:title $TITLE" --json number --jq '.[0].number' || true)"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY" --label upstream-sync || \
+              gh issue create --title "$TITLE" --body "$BODY"
+          fi
