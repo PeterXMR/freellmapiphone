@@ -48,21 +48,26 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
 
-      # The app's own dependencies. (No Android SDK / JDK needed — `expo export`
-      # produces the JS/Hermes bundle, which is where every adapter seam lives.)
+      # Upstream workspace deps (server/client/shared) — same install upstream's
+      # own ci.yml runs. This is what the Node verification suites need: they
+      # import the reused `server/src` code, whose `db/index.ts` imports
+      # `better-sqlite3` (the expo-sqlite facade's test oracle) resolved from the
+      # repo-root node_modules — NOT from mobile/. The server workspace already
+      # declares better-sqlite3, tsx, undici and socks-proxy-agent, so no extra
+      # install is needed. (better-sqlite3 is a type-only import in the app, so
+      # it never enters the Metro bundle.)
+      - name: Install upstream workspace deps (verification oracle)
+        run: npm install
+
+      # The app's own dependencies, for the Metro bundle. (No Android SDK / JDK
+      # needed — `expo export` emits the JS/Hermes bundle, where every seam lives.)
       - name: Install mobile dependencies
         working-directory: mobile
         run: npm install
-
-      # better-sqlite3 is the *oracle* the expo-sqlite facade is verified
-      # against — not an app dependency (the app imports it as a type only, so
-      # it never enters the bundle). Installed ephemerally for the Node suites.
-      # 12.x matches the version the facade contract was proven against.
-      - name: Install verification oracle (better-sqlite3)
-        working-directory: mobile
-        run: npm install --no-save better-sqlite3@12
 
       # Node-only proof that the reused upstream logic still behaves: provider
       # streaming portability, the router/fallback engine, the better-sqlite3

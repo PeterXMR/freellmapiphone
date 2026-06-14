@@ -59,15 +59,20 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
+
+      # Upstream workspace deps (provides better-sqlite3 — the facade oracle — at
+      # the repo root, where the reused server/src code resolves it). See
+      # mobile-ci.yml for the full rationale. Run AFTER the merge so it installs
+      # against the merged tree's lockfile.
+      - name: Install upstream workspace deps (verification oracle)
+        run: npm install
 
       - name: Install mobile dependencies
         working-directory: mobile
         run: npm install
-
-      - name: Install verification oracle (better-sqlite3)
-        working-directory: mobile
-        run: npm install --no-save better-sqlite3@12
 
       - name: Verify provider portability
         working-directory: mobile

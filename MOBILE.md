@@ -23,14 +23,21 @@ git checkout main
 git fetch upstream
 git merge upstream/main          # expected: clean (we never edit upstream files)
 
+npm install                      # upstream workspace deps — provides better-sqlite3
+                                 # (the facade's test oracle) at the repo root, where
+                                 # the reused server/src resolves it. Not an app dep.
 cd mobile
-npm install
-npm install --no-save better-sqlite3@12   # the facade's test oracle (not an app dep)
+npm install                      # the app's own deps, for the Metro bundle
 npm run verify:portability && npm run verify:router \
   && npm run verify:facade && npm run verify:schema
 npx tsx src/adapters/keystore/crypto-shim.check.mts
 npx expo export --platform android          # the real gate — must bundle
 ```
+
+> The local dev shortcut in [`mobile/verification/README.md`](mobile/verification/README.md)
+> (symlinking `../freellmapi/node_modules` at the repo root) is an alternative to the
+> first `npm install` when offline — but keep that sibling checkout current, or it
+> drags a stale `shared/types` into resolution.
 
 If the merge **conflicts**, an upstream file you depend on moved *and* a mobile
 change touched it — that should never happen by design; find the edited upstream
