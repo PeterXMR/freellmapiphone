@@ -558,8 +558,12 @@ PRs should include a test, keep the existing test suite green, and match the `.e
 <a href="https://github.com/immanuelsavio"><img src="https://images.weserv.nl/?url=github.com/immanuelsavio.png&w=60&h=60&fit=cover&mask=circle" width="60" alt="@immanuelsavio" /></a>
 <a href="https://github.com/Slyker"><img src="https://images.weserv.nl/?url=github.com/Slyker.png&w=60&h=60&fit=cover&mask=circle" width="60" alt="@Slyker" /></a>
 <a href="https://github.com/wells1013"><img src="https://images.weserv.nl/?url=github.com/wells1013.png&w=60&h=60&fit=cover&mask=circle" width="60" alt="@wells1013" /></a>
+<a href="https://github.com/evgkrsk"><img src="https://images.weserv.nl/?url=github.com/evgkrsk.png&w=60&h=60&fit=cover&mask=circle" width="60" alt="@evgkrsk" /></a>
 <a href="https://github.com/aaronjmars"><img src="https://images.weserv.nl/?url=github.com/aaronjmars.png&w=60&h=60&fit=cover&mask=circle" width="60" alt="@aaronjmars" /></a>
 <a href="https://github.com/Robs87"><img src="https://images.weserv.nl/?url=github.com/Robs87.png&w=60&h=60&fit=cover&mask=circle" width="60" alt="@Robs87" /></a>
+<a href="https://github.com/dashitongzhi"><img src="https://images.weserv.nl/?url=github.com/dashitongzhi.png&w=60&h=60&fit=cover&mask=circle" width="60" alt="@dashitongzhi" /></a>
+<a href="https://github.com/QingJ01"><img src="https://images.weserv.nl/?url=github.com/QingJ01.png&w=60&h=60&fit=cover&mask=circle" width="60" alt="@QingJ01" /></a>
+<a href="https://github.com/3215"><img src="https://images.weserv.nl/?url=github.com/3215.png&w=60&h=60&fit=cover&mask=circle" width="60" alt="@3215" /></a>
 
 ## Terms of Service review
 

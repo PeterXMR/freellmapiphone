@@ -1,11 +1,12 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, dialog, ipcMain, clipboard, nativeTheme } from 'electron';
+import { app, dialog, ipcMain, clipboard, nativeTheme, shell } from 'electron';
 import { startServer, ensureSessionToken, getUnifiedApiKey } from './server.mjs';
 import { loadConfig, saveConfig } from './config.js';
-import { buildTray } from './tray.js';
+import { buildTray, refreshTrayLocale } from './tray.js';
 import { openDashboard } from './window.js';
 import { todayStats, hourlyRequests, successRateToday } from './stats.js';
+import { normalizeLocale, nativeStrings, type NativeLocale } from './i18n.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PORT = 31415;
@@ -30,6 +31,11 @@ if (!app.requestSingleInstanceLock()) {
     ?? loadConfig().theme
     ?? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
   nativeTheme.themeSource = theme;
+  // The dashboard also owns the language (its ⋯-menu selector); the native tray
+  // menu and popover follow via the same mirror-and-persist pattern as the theme.
+  let locale: NativeLocale = normalizeLocale(
+    (process.env.FREEAPI_LOCALE as string | undefined) ?? loadConfig().locale,
+  );
 
   app.on('second-instance', () => {
     if (sessionToken) openDashboard(resolvedPort, sessionToken);
@@ -37,6 +43,33 @@ if (!app.requestSingleInstanceLock()) {
 
   // The app lives in the tray; closing the dashboard window must not quit.
   app.on('window-all-closed', () => {});
+
+  // Every window is a view onto the local dashboard, so anything that isn't
+  // the local server belongs in the system browser. Without a window-open
+  // handler, target="_blank" links (e.g. "Get API key" on the Keys page)
+  // spawn a bare child window that inherits our preload and renders blank
+  // (#304) — deny the window and hand the URL to the OS instead. Only
+  // http(s) ever reaches openExternal.
+  const isExternal = (url: string) => {
+    try {
+      const u = new URL(url);
+      return (u.protocol === 'http:' || u.protocol === 'https:') && u.hostname !== '127.0.0.1';
+    } catch {
+      return false;
+    }
+  };
+  app.on('web-contents-created', (_event, contents) => {
+    contents.setWindowOpenHandler(({ url }) => {
+      if (isExternal(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
+    contents.on('will-navigate', (event, url) => {
+      if (isExternal(url)) {
+        event.preventDefault();
+        shell.openExternal(url);
+      }
+    });
+  });
 
   // ── popover IPC ──────────────────────────────────────────────────────────
   ipcMain.handle('freeapi:snapshot', () => {
@@ -50,6 +83,10 @@ if (!app.requestSingleInstanceLock()) {
       hourly: hourlyRequests(),
       loginItem: app.getLoginItemSettings().openAtLogin,
       theme,
+      locale,
+      // The popover renderer is a file:// page with no access to the desktop
+      // i18n module, so ship it the resolved string bundle for the active locale.
+      strings: nativeStrings(locale),
     };
   });
   ipcMain.on('freeapi:theme-changed', async (_e, next: 'dark' | 'light') => {
@@ -59,6 +96,16 @@ if (!app.requestSingleInstanceLock()) {
     saveConfig({ ...loadConfig(), theme });
     // Flips the vibrancy materials (popover glass + dashboard backdrop).
     nativeTheme.themeSource = theme;
+    const { getPopoverWindow } = await import('./popover.js');
+    getPopoverWindow()?.webContents.send('freeapi:refresh');
+  });
+  ipcMain.on('freeapi:locale-changed', async (_e, raw: string) => {
+    const next = normalizeLocale(raw);
+    if (next === locale) return;
+    locale = next;
+    saveConfig({ ...loadConfig(), locale });
+    refreshTrayLocale(locale);
+    // Re-label the popover if it's open (snapshot now carries the new strings).
     const { getPopoverWindow } = await import('./popover.js');
     getPopoverWindow()?.webContents.send('freeapi:refresh');
   });
@@ -91,7 +138,7 @@ if (!app.requestSingleInstanceLock()) {
       resolvedPort = port;
       saveConfig({ ...cfg, port });
       sessionToken = ensureSessionToken();
-      const tray = buildTray(port, sessionToken);
+      const tray = buildTray(port, sessionToken, () => locale);
       console.log(`[desktop] FreeLLMAPI running on http://127.0.0.1:${port}`);
 
       // Dev-only UI verification: FREEAPI_SHOT=1 opens the popover and the
