@@ -51,6 +51,7 @@ import {
 import { contentToString } from '../../../server/src/lib/content';
 import { repairToolArguments, toolSchemaMap } from '../../../server/src/lib/tool-args';
 import { pruneRequestAnalytics } from '../../../server/src/services/request-retention';
+import { sanitizeProviderErrorMessage } from '../../../server/src/lib/error-redaction';
 
 // Error-classification helpers. proxy.ts ALSO exports these, but that module
 // top-level imports Express, zod, embeddings, and context-handoff — none of
@@ -72,6 +73,16 @@ import { initDb, getDb } from '../adapters/sqlite/db-shim';
 // ── Error classification (mirrored from proxy.ts; keep in sync) ──────────────
 function errMsg(err: unknown): string {
   return ((err as { message?: string })?.message ?? '').toLowerCase();
+}
+
+// Redact secrets (Bearer tokens, sk-/gsk-/AIza- keys, JWTs, URLs) and cap
+// length before persisting an error string in the on-device SQLite `requests`
+// table. Mirrors how server proxy.ts wraps every logRequest's error field
+// through sanitizeProviderErrorMessage. The SQLite DB is plaintext on Android,
+// so an unredacted bearer in a 401 echo is a real exposure (the whole reason
+// keys live in Keystore, not SQLite).
+function safeErr(err: unknown): string {
+  return sanitizeProviderErrorMessage((err as { message?: unknown })?.message);
 }
 
 function isModelAccessForbiddenError(err: unknown): boolean {
@@ -223,6 +234,17 @@ function setStickyModel(messages: ChatMessage[], modelDbId: number, strategyKey?
   const key = getSessionKey(messages, strategyKey);
   if (!key) return;
   stickySessionMap.set(key, { modelDbId, lastUsed: Date.now() });
+
+  // Mirror the server's lazy TTL cleanup (routes/proxy.ts:103-107): unread keys
+  // are never reclaimed by getStickyModel (which only deletes the one it just
+  // looked up), so without this pass the map grows unbounded on a long-running
+  // RN session that keeps starting new first-user-message threads.
+  if (stickySessionMap.size > 500) {
+    const now = Date.now();
+    for (const [k, v] of stickySessionMap) {
+      if (now - v.lastUsed > STICKY_TTL_MS) stickySessionMap.delete(k);
+    }
+  }
 }
 
 // ── Request analytics (mirrored from proxy.ts logRequest; keep in sync) ──────
@@ -404,6 +426,20 @@ export async function complete(
         continue;
       }
 
+      // Repair double-encoded tool-call arguments against the request's tool
+      // schemas (e.g. GLM emitting an array param as a JSON string), so strict
+      // clients don't reject the call. Schema-gated — a true string param is
+      // never touched. Mirrors proxy.ts ~1021-1027 (the stream path repairs
+      // its assembled calls at line ~583 below).
+      if (msg?.tool_calls?.length) {
+        const schemas = toolSchemaMap(opts.tools);
+        for (const tc of msg.tool_calls) {
+          if (tc?.function?.arguments != null) {
+            tc.function.arguments = repairToolArguments(tc.function.arguments, schemas.get(tc.function.name));
+          }
+        }
+      }
+
       // Success accounting — proxy.ts ~1008-1013.
       recordRequest(route.platform, route.modelId, route.keyId);
       recordTokens(route.platform, route.modelId, route.keyId, result.usage?.total_tokens ?? 0);
@@ -427,7 +463,7 @@ export async function complete(
         },
       };
     } catch (err) {
-      logRequest(route.platform, route.modelId, route.keyId, 'error', inputTokens, 0, Date.now() - start, errMsg(err) || 'unknown error', null, pinned);
+      logRequest(route.platform, route.modelId, route.keyId, 'error', inputTokens, 0, Date.now() - start, safeErr(err), null, pinned);
       if (isRetryableError(err)) {
         onRetryableError(route, err, skipKeys, skipModels);
         lastError = err;
@@ -620,7 +656,7 @@ export async function* streamComplete(
       yield { done: { finishReason: finish } };
       return;
     } catch (err) {
-      logRequest(route.platform, route.modelId, route.keyId, 'error', inputTokens, totalOutputTokens, Date.now() - start, errMsg(err) || 'unknown error', ttfbMs, pinned);
+      logRequest(route.platform, route.modelId, route.keyId, 'error', inputTokens, totalOutputTokens, Date.now() - start, safeErr(err), ttfbMs, pinned);
       if (!emittedPayload && isRetryableError(err)) {
         // Failure before any token reached the consumer → cooldown + try the
         // next model, exactly like the server's pre-header failover.
