@@ -9,3 +9,8 @@ web-build/
 # locally on demand. Keeps `git merge upstream/main` clean.
 /android/
 /ios/
+
+# Release signing material — NEVER commit. The keystore is the app's identity;
+# losing it means you can't ship an update under the same signature. Back it up
+# out-of-band. See plugins/withReleaseSigning.js and docs/BUILD.md.
+/credentials/

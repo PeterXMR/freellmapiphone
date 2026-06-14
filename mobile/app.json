@@ -12,7 +12,8 @@
     "plugins": [
       "expo-sqlite",
       "expo-secure-store",
-      "expo-asset"
+      "expo-asset",
+      "./plugins/withReleaseSigning"
     ]
   }
 }

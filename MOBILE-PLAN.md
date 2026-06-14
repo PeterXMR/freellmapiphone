@@ -99,15 +99,24 @@ Android Keystore and never touch a network.
   - Chat (streaming + fallback), Keys/Providers, Settings; bottom-tab nav.
     Note: v1 uses raw SQL through the facade + TanStack Query for reactivity rather than
     `drizzle-orm`/`useLiveQuery` (matches upstream's raw-SQL router; less surface to sync).
-- **Phase 5 — First device bring-up** — TODO (the riskiest, highest-value step)
-  - On a working network: `npx expo install --fix` → `expo export --platform android`
-    (device-free proof that Metro bundles the aliased upstream code) → `expo run:android`.
-  - On-device smoke test: add a real key → router picks a provider → streamed completion
-    renders (the on-device version of the Phase 3 proof). Validates the facade,
-    `expo-secure-store`, `expo/fetch` streaming, and the Metro alias for real.
-- **Phase 6 — Build & distribution** — TODO
-  - Produce an installable APK (EAS Build or local Gradle) + Android **app** signing
-    (separate keystore from the API-key store). Decide distribution (sideload / Play).
+- **Phase 5 — First device bring-up** ✅ (emulator-verified, commit `abcfb07`)
+  - Verified end-to-end on a Pixel_4a_API_34 emulator: build + bundle + launch +
+    add/delete key + streamed chat completion with provider fallback. Fixed three
+    device-only defects the Node suites structurally cannot catch: CSPRNG missing on
+    Hermes (`react-native-get-random-values` imported first), WHATWG `Headers/Request/
+    Response` globals clobbered by the `expo/fetch` streaming override, and Metro's
+    NodeNext `.js`→`.ts` resolution for upstream-origin relative imports.
+  - Validated the expo-sqlite facade, `expo-secure-store`, `expo/fetch` streaming, and
+    the Metro alias on a real Android runtime.
+- **Phase 6 — Build & distribution** ✅ (local Gradle, signed release APK)
+  - `npm run build:apk` produces a signed `app-release.apk` via local Gradle (JDK 17 pinned;
+    RN 0.79/Gradle 8.13 reject JDK 21+). Release signing is injected at prebuild time by the
+    `withReleaseSigning` Expo config plugin (reads gitignored `credentials/keystore.properties`),
+    so a *signed* build is reproducible from source and the `android/` dir stays gitignored →
+    `git merge upstream/main` stays clean. The app-signing keystore is **separate** from the
+    `expo-secure-store` Android Keystore that holds API keys.
+  - Distribution: **sideload** the universal APK (`adb install -r …/app-release.apk`); Play
+    `.aab` deferred (YAGNI for v1). See `mobile/docs/BUILD.md`.
 - **Phase 7 — Harden the sync loop** — TODO (depends on Phase 6 build infra)
   - CI: `git fetch upstream && git merge upstream/main` must still bundle + build mobile,
     so an upstream change that breaks an adapter contract fails loudly. `MOBILE.md`
