@@ -1,6 +1,5 @@
-// Pure-logic sanity check for crypto-shim. Run from the sibling repo's tsx:
-//   cd /Users/accountname/Documents/projects/freellmapi && \
-//     npx tsx /Users/accountname/Documents/projects/freellmapiphone/mobile/src/adapters/keystore/crypto-shim.check.mts
+// Pure-logic sanity check for crypto-shim. Run from the mobile app:
+//   cd mobile && npx tsx src/adapters/keystore/crypto-shim.check.mts
 //
 // We can't load expo-secure-store under Node, so we re-implement the shim's pure
 // logic (maskKey, ref generation, encrypt/decrypt over an in-memory SecretStore)

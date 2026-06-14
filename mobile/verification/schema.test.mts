@@ -36,11 +36,12 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
-// better-sqlite3 lives in the SIBLING repo's node_modules. ESM bare-import
-// resolution won't cross repos, so require it via a require rooted at the
-// sibling's package.json (same approach as facade.contract.mts).
-const siblingRequire = createRequire('/Users/accountname/Documents/projects/freellmapi/package.json');
-const Database = siblingRequire('better-sqlite3') as typeof import('better-sqlite3');
+// better-sqlite3 is the test oracle (not an app dependency). Resolve it from
+// this file's location upward to the nearest node_modules that has it — the
+// repo-root workspace install in CI, or the local `../freellmapi` symlink in
+// dev (same approach as facade.contract.mts).
+const localRequire = createRequire(import.meta.url);
+const Database = localRequire('better-sqlite3') as typeof import('better-sqlite3');
 type DatabaseT = import('better-sqlite3').Database;
 
 import { applySchema } from '../src/db/schema.ts';
