@@ -105,3 +105,14 @@ stay clean):
 Neither needs the Android SDK or JDK: `expo export` produces the JS/Hermes bundle,
 which is where every seam above lives. The signed-APK build (Gradle, JDK 17) stays
 a local/manual step — see [`mobile/docs/BUILD.md`](mobile/docs/BUILD.md).
+
+### Upstream `docker.yml` is disabled in this fork
+
+Upstream's `docker.yml` pushes a **server** image to `ghcr.io/<owner>/freellmapi`.
+GHCR refuses mixed-case names, and this fork's owner (`PeterXMR`) has capitals, so
+the build fails on every push — and the server image isn't a deliverable of this
+Android-app fork anyway. It's **disabled** at the Actions level
+(`gh workflow disable docker.yml`) rather than patched, so the upstream file stays
+byte-identical and `git merge upstream/main` keeps working. Re-enable with
+`gh workflow enable docker.yml` if the fork ever ships the server image (you'd also
+need to lowercase the `IMAGE` ref).
