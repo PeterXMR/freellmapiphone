@@ -29,7 +29,9 @@ export interface BetterSqliteLike {
 // API key secrets live here (hardware-encrypted), NOT in plaintext SQLite.
 // The SQLite `keys` table stores only a reference id in its encrypted_key
 // column; crypto-shim.decrypt() resolves that reference back to the secret.
-// All methods are synchronous (expo-secure-store getItem/setItem/deleteItemSync).
+// All methods are synchronous from the caller's view (expo-secure-store
+// getItem/setItem are sync; delete() internally fires deleteItemAsync —
+// expo-secure-store 14 has no sync delete — without awaiting it).
 // NOTE: Android Keystore values are capped at ~2048 bytes — fine for API keys.
 
 export interface SecretStore {

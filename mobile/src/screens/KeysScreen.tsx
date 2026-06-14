@@ -24,13 +24,13 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import type { Platform as ProviderPlatform } from '../../../shared/types';
-// Imported by RELATIVE path so Metro resolves them via watchFolders. The Metro
-// custom resolver (mobile/metro.config.js) then redirects the upstream modules'
-// OWN internal imports of `../db/index.js` and `../lib/crypto.js` to the mobile
-// adapters — so getDb/encrypt/decrypt/maskKey below come from the keystore- and
-// expo-sqlite-backed shims, not Node crypto / better-sqlite3.
-import { getDb } from '../../../server/src/db/index';
-import { encrypt, decrypt, maskKey } from '../../../server/src/lib/crypto';
+// Mobile code imports the mobile adapters DIRECTLY. The Metro redirect in
+// mobile/metro.config.js is scoped to imports originating inside upstream
+// server/src files; it exists so upstream modules' internal `../db/index.js` /
+// `../lib/crypto.js` imports resolve to these same shims without editing
+// upstream source. Either path yields the same module instance.
+import { getDb } from '../adapters/sqlite/db-shim';
+import { encrypt, decrypt, maskKey, forgetSecret } from '../adapters/keystore/crypto-shim';
 import { getAllProviders } from '../../../server/src/providers/index';
 
 interface KeyRow {
@@ -79,8 +79,26 @@ export default function KeysScreen() {
   const addKey = useMutation({
     mutationFn: async ({ platform, key }: { platform: ProviderPlatform; key: string }) => {
       const db = getDb();
+      const isKeyless = providers.find(p => p.platform === platform)?.keyless === true;
+      // Keyless providers (Kilo anon, Pollinations, …) store a sentinel so
+      // routing sees the platform as configured; the provider omits the auth
+      // header on outgoing calls. Mirrors server/src/routes/keys.ts POST /.
+      const keyToStore = isKeyless ? (key || 'no-key') : key;
+
+      // A keyless provider needs only one sentinel row — re-enable an existing
+      // one instead of piling up duplicates each time the user taps "Add".
+      if (isKeyless) {
+        const existing = db
+          .prepare('SELECT id FROM api_keys WHERE platform = ? LIMIT 1')
+          .get(platform) as { id: number } | undefined;
+        if (existing) {
+          db.prepare("UPDATE api_keys SET enabled = 1, status = 'unknown' WHERE id = ?").run(existing.id);
+          return;
+        }
+      }
+
       // keystore-backed encrypt → reference triple; plaintext never hits SQLite.
-      const { encrypted, iv, authTag } = encrypt(key);
+      const { encrypted, iv, authTag } = encrypt(keyToStore);
       db.prepare(
         `INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled)
          VALUES (?, '', ?, ?, ?, 'unknown', 1)`,
@@ -104,14 +122,24 @@ export default function KeysScreen() {
 
   const deleteKey = useMutation({
     mutationFn: async (id: number) => {
-      getDb().prepare('DELETE FROM api_keys WHERE id = ?').run(id);
+      const db = getDb();
+      // The row's encrypted_key holds the Keystore REFERENCE — resolve it
+      // before the row (the only holder of the ref) disappears, then evict the
+      // secret so it doesn't linger in the Android Keystore as an orphan.
+      const row = db
+        .prepare('SELECT encrypted_key FROM api_keys WHERE id = ?')
+        .get(id) as { encrypted_key: string } | undefined;
+      db.prepare('DELETE FROM api_keys WHERE id = ?').run(id);
+      if (row?.encrypted_key) forgetSecret(row.encrypted_key);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS_QUERY }),
   });
 
+  const selectedIsKeyless = providers.find(p => p.platform === selected)?.keyless === true;
+
   const onAdd = () => {
     const key = keyInput.trim();
-    if (!key) return;
+    if (!key && !selectedIsKeyless) return;
     addKey.mutate({ platform: selected, key });
   };
 
@@ -151,16 +179,23 @@ export default function KeysScreen() {
           style={styles.input}
           value={keyInput}
           onChangeText={setKeyInput}
-          placeholder={`${providerName(selected)} API key`}
+          placeholder={
+            selectedIsKeyless
+              ? `${providerName(selected)} — no key needed, just tap Add`
+              : `${providerName(selected)} API key`
+          }
           placeholderTextColor="#9ca3af"
           autoCapitalize="none"
           autoCorrect={false}
           secureTextEntry
         />
         <Pressable
-          style={[styles.addBtn, (addKey.isPending || keyInput.trim().length === 0) && styles.addBtnDisabled]}
+          style={[
+            styles.addBtn,
+            (addKey.isPending || (!selectedIsKeyless && keyInput.trim().length === 0)) && styles.addBtnDisabled,
+          ]}
           onPress={onAdd}
-          disabled={addKey.isPending || keyInput.trim().length === 0}
+          disabled={addKey.isPending || (!selectedIsKeyless && keyInput.trim().length === 0)}
         >
           <Text style={styles.addBtnText}>{addKey.isPending ? '…' : 'Add'}</Text>
         </Pressable>

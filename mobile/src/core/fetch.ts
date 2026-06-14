@@ -21,8 +21,34 @@
 // (before any provider call), e.g. at the top of the bridge / app entry.
 
 import { fetch as expoFetch } from 'expo/fetch';
+// whatwg-fetch ALWAYS exports the WHATWG classes (see its `exports.Headers = …`),
+// even though it only installs them as GLOBALS behind an `if (!global.fetch)` guard.
+// We read the exports directly so we can populate the globals ourselves, decoupled
+// from fetch-install order — see ensureWhatwgGlobals() below.
+import * as WhatwgFetch from 'whatwg-fetch';
 
 let installed = false;
+
+// expo/fetch's request normalizer branches on `value instanceof Headers|Request|
+// Response` (node_modules/expo/src/winter/fetch/RequestUtils.ts). Those classes are
+// installed as globals lazily by whatwg-fetch, but ONLY when no global `fetch`
+// exists yet (`if (!global.fetch)`). Because installStreamingFetch() overwrites
+// global.fetch with expo/fetch, that guard never fires, leaving Headers/Request/
+// Response undefined — so `headers instanceof Headers` throws "right operand of
+// 'instanceof' is not an object" on the FIRST network request (every chat send).
+// React Native's own setUpXHR has the same fetch-guarded laziness, so it doesn't
+// save us. Assign the classes ourselves, before the fetch override, to fix it.
+function ensureWhatwgGlobals(): void {
+  const g = globalThis as Record<string, unknown>;
+  const w = WhatwgFetch as unknown as {
+    Headers?: unknown;
+    Request?: unknown;
+    Response?: unknown;
+  };
+  if (typeof g.Headers === 'undefined' && w.Headers) g.Headers = w.Headers;
+  if (typeof g.Request === 'undefined' && w.Request) g.Request = w.Request;
+  if (typeof g.Response === 'undefined' && w.Response) g.Response = w.Response;
+}
 
 /**
  * Install expo/fetch as the global fetch used by the upstream provider layer.
@@ -30,6 +56,9 @@ let installed = false;
  */
 export function installStreamingFetch(): void {
   if (installed) return;
+  // Ensure the WHATWG Headers/Request/Response globals exist BEFORE we replace
+  // global.fetch (which would otherwise suppress whatwg-fetch's own installer).
+  ensureWhatwgGlobals();
   // expo/fetch's type is structurally compatible with the DOM fetch signature
   // the provider layer expects; the cast satisfies TS across the lib boundary.
   (globalThis as unknown as { fetch: typeof fetch }).fetch =
