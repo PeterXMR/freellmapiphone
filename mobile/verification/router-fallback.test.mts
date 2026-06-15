@@ -1,19 +1,19 @@
-// Verifies the REUSED router + fallback engine in plain Node — against THIS
-// repo's OWN vendored server/src (the exact code the on-device bridge reuses),
-// NOT a sibling checkout, which may sit on a different branch with a different
-// routeRequest signature.
+// Verifies the REUSED router + fallback engine in plain Node — against the
+// pinned upstream submodule's server/src at vendor/freellmapi (the exact code
+// the on-device bridge reuses), NOT a sibling checkout, which may sit on a
+// different branch with a different routeRequest signature.
 //
-// Local-run prerequisite (until `npm install` works in this repo): the native
-// better-sqlite3 + tsx are borrowed from a sibling freellmapi checkout via a
-// gitignored node_modules symlink:
-//   ln -sfn ../freellmapi/node_modules ./node_modules   # ABI-matching, same Node
-// Run from the repo root:
-//   DEV_MODE=true NODE_ENV=test npx tsx mobile/verification/router-fallback.test.mts
+// Local-run prerequisite: the upstream workspace deps (better-sqlite3 + the
+// rest) come from `npm install` inside vendor/freellmapi; tsx comes from mobile's
+// own devDeps. Run from mobile/:
+//   (cd ../vendor/freellmapi && npm install)   # once — installs the oracle
+//   DEV_MODE=true NODE_ENV=test npm run verify:router
 process.env.DEV_MODE = 'true';
 process.env.NODE_ENV = 'test';
 
-// This repo's own server/src (two levels up from mobile/verification/).
-const SRC = new URL('../../server/src', import.meta.url).pathname;
+// The pinned upstream submodule's server/src (vendor/freellmapi, two levels up
+// from mobile/verification/).
+const SRC = new URL('../../vendor/freellmapi/server/src', import.meta.url).pathname;
 const { initDb, getDb } = await import(`${SRC}/db/index.ts`);
 const { encrypt } = await import(`${SRC}/lib/crypto.ts`);
 const { getProvider } = await import(`${SRC}/providers/index.ts`);

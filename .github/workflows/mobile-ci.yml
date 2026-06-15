@@ -4,11 +4,11 @@
 # LOUDLY: an upstream change (new provider, refactor, moved file) that quietly
 # breaks one of the mobile adapter seams. See ../../MOBILE.md for the seam map.
 #
-# It is a NEW file in .github/workflows/ — it never edits the upstream
-# `ci.yml`/`docker.yml`, so `git merge upstream/main` stays conflict-free.
+# Upstream is consumed as the pinned submodule at vendor/freellmapi; this gate
+# runs whenever that pin moves (an update-bot PR) or the app changes.
 #
 # The authoritative check is `expo export`: a real Metro bundle that runs the
-# custom resolver (metro.config.js) against the live upstream source. A renamed
+# custom resolver (metro.config.js) against the pinned upstream submodule. A renamed
 # or moved upstream module that the resolver aliases (db/index, lib/crypto,
 # lib/proxy) makes the bundle fail here instead of on a user's device.
 #
@@ -23,15 +23,15 @@ on:
     branches: [main]
     paths:
       - 'mobile/**'
-      - 'server/**'
-      - 'shared/**'
+      - 'vendor/freellmapi'
+      - '.gitmodules'
       - '.github/workflows/mobile-ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'mobile/**'
-      - 'server/**'
-      - 'shared/**'
+      - 'vendor/freellmapi'
+      - '.gitmodules'
       - '.github/workflows/mobile-ci.yml'
 
 jobs:
@@ -44,9 +44,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Fetch vendor/freellmapi (the pinned upstream submodule). Inert until
-          # the PR-2 cutover — Metro blockLists it — but checking it out here
-          # proves the submodule mechanics work in CI before anything depends on it.
+          # Fetch vendor/freellmapi (the pinned upstream submodule). The app's
+          # reused upstream code (server/src + shared) lives here now — both the
+          # Metro bundle and the Node suites resolve it from the submodule.
           submodules: recursive
 
       - uses: actions/setup-node@v4
@@ -54,18 +54,17 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: |
-            package-lock.json
+            vendor/freellmapi/package-lock.json
             mobile/package-lock.json
 
-      # Upstream workspace deps (server/client/shared) — same install upstream's
-      # own ci.yml runs. This is what the Node verification suites need: they
-      # import the reused `server/src` code, whose `db/index.ts` imports
-      # `better-sqlite3` (the expo-sqlite facade's test oracle) resolved from the
-      # repo-root node_modules — NOT from mobile/. The server workspace already
-      # declares better-sqlite3, tsx, undici and socks-proxy-agent, so no extra
-      # install is needed. (better-sqlite3 is a type-only import in the app, so
-      # it never enters the Metro bundle.)
+      # Upstream workspace deps INSIDE the submodule. The router/portability Node
+      # suites import the reused server/src code, whose internal imports (undici,
+      # socks-proxy-agent, better-sqlite3, …) resolve from vendor/freellmapi's own
+      # node_modules. (The facade/schema suites get better-sqlite3 from mobile's
+      # devDeps instead; the Metro bundle needs none of this — it aliases the
+      # Node-only modules away.)
       - name: Install upstream workspace deps (verification oracle)
+        working-directory: vendor/freellmapi
         run: npm install
 
       # The app's own dependencies, for the Metro bundle. (No Android SDK / JDK

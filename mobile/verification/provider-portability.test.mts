@@ -1,15 +1,13 @@
-// Proves THIS repo's own provider layer (server/src/providers) runs with no
-// Express, no DB, no Node-only APIs — only global fetch / AbortController /
-// TextDecoder / ReadableStream, all of which exist in React Native via
-// expo/fetch. That is the premise behind reusing the provider code on-device.
+// Proves the pinned upstream submodule's provider layer (vendor/freellmapi/
+// server/src/providers) runs with no Express, no DB, no Node-only APIs — only
+// global fetch / AbortController / TextDecoder / ReadableStream, all of which
+// exist in React Native via expo/fetch. That is the premise behind reusing the
+// provider code on-device.
 //
-// Local-run prerequisite (until `npm install` works here): tsx is borrowed from a
-// sibling freellmapi checkout via the gitignored node_modules symlink
-// (ln -sfn ../freellmapi/node_modules ./node_modules). Providers need no native
-// modules, so only tsx is required.
-// Run from the repo root:
-//   npx tsx mobile/verification/provider-portability.test.mts
-const SRC = new URL('../../server/src', import.meta.url).pathname;
+// Local-run prerequisite: tsx comes from mobile's own devDeps. Providers need no
+// native modules, so no vendor install is required for this suite. Run from mobile/:
+//   npm run verify:portability
+const SRC = new URL('../../vendor/freellmapi/server/src', import.meta.url).pathname;
 const { OpenAICompatProvider } = await import(`${SRC}/providers/openai-compat.ts`);
 
 const provider = new OpenAICompatProvider({ platform: 'groq' as any, name: 'Groq', baseUrl: 'https://example.invalid/v1' });
