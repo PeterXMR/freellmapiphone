@@ -2,7 +2,7 @@
 // it streams tokens from the in-process bridge (streamComplete), which routes
 // through the reused upstream router + provider fallback.
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,8 @@ import {
 } from 'react-native';
 import type { ChatMessage } from '../../../shared/types';
 import { streamComplete, type RoutedVia } from '../core/bridge';
+import { useTheme } from '../theme/ThemeProvider';
+import type { Palette } from '../theme/palette';
 
 interface UiMessage {
   id: string;
@@ -32,6 +34,8 @@ function toChatMessages(history: UiMessage[]): ChatMessage[] {
 }
 
 export default function ChatScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -89,7 +93,7 @@ export default function ChatScreen() {
       <View style={[styles.bubbleRow, isUser ? styles.rowUser : styles.rowAssistant]}>
         <View style={[styles.bubble, isUser ? styles.userBubble : styles.assistantBubble, item.error && styles.errorBubble]}>
           {item.text.length === 0 ? (
-            <ActivityIndicator size="small" />
+            <ActivityIndicator size="small" color={colors.textMuted} />
           ) : (
             <Text style={[styles.bubbleText, isUser && styles.userText]}>{item.text}</Text>
           )}
@@ -102,7 +106,7 @@ export default function ChatScreen() {
         </View>
       </View>
     );
-  }, []);
+  }, [styles, colors]);
 
   return (
     <KeyboardAvoidingView
@@ -128,7 +132,7 @@ export default function ChatScreen() {
           value={input}
           onChangeText={setInput}
           placeholder="Message"
-          placeholderTextColor="#9ca3af"
+          placeholderTextColor={colors.textFaint}
           multiline
           editable={!sending}
           onSubmitEditing={send}
@@ -145,52 +149,54 @@ export default function ChatScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
-  list: { padding: 12, flexGrow: 1 },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
-  emptyText: { fontSize: 16, fontWeight: '600', color: '#374151' },
-  emptySub: { fontSize: 13, color: '#9ca3af', marginTop: 6, textAlign: 'center', paddingHorizontal: 24 },
-  bubbleRow: { marginVertical: 4, flexDirection: 'row' },
-  rowUser: { justifyContent: 'flex-end' },
-  rowAssistant: { justifyContent: 'flex-start' },
-  bubble: { maxWidth: '82%', borderRadius: 16, paddingVertical: 8, paddingHorizontal: 12 },
-  userBubble: { backgroundColor: '#2563eb', borderBottomRightRadius: 4 },
-  assistantBubble: { backgroundColor: '#f3f4f6', borderBottomLeftRadius: 4 },
-  errorBubble: { backgroundColor: '#fee2e2' },
-  bubbleText: { fontSize: 15, color: '#111827', lineHeight: 21 },
-  userText: { color: '#ffffff' },
-  meta: { fontSize: 11, color: '#6b7280', marginTop: 6 },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    padding: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
-  },
-  input: {
-    flex: 1,
-    maxHeight: 120,
-    minHeight: 40,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 10,
-    fontSize: 15,
-    color: '#111827',
-  },
-  sendBtn: {
-    marginLeft: 8,
-    backgroundColor: '#2563eb',
-    borderRadius: 20,
-    paddingHorizontal: 18,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sendBtnDisabled: { backgroundColor: '#93c5fd' },
-  sendText: { color: '#ffffff', fontWeight: '600', fontSize: 15 },
-});
+function makeStyles(colors: Palette) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.bg },
+    list: { padding: 12, flexGrow: 1 },
+    empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
+    emptyText: { fontSize: 16, fontWeight: '600', color: colors.textStrong },
+    emptySub: { fontSize: 13, color: colors.textFaint, marginTop: 6, textAlign: 'center', paddingHorizontal: 24 },
+    bubbleRow: { marginVertical: 4, flexDirection: 'row' },
+    rowUser: { justifyContent: 'flex-end' },
+    rowAssistant: { justifyContent: 'flex-start' },
+    bubble: { maxWidth: '82%', borderRadius: 16, paddingVertical: 8, paddingHorizontal: 12 },
+    userBubble: { backgroundColor: colors.primary, borderBottomRightRadius: 4 },
+    assistantBubble: { backgroundColor: colors.surface, borderBottomLeftRadius: 4 },
+    errorBubble: { backgroundColor: colors.dangerBg },
+    bubbleText: { fontSize: 15, color: colors.text, lineHeight: 21 },
+    userText: { color: colors.onPrimary },
+    meta: { fontSize: 11, color: colors.textMuted, marginTop: 6 },
+    inputRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      padding: 8,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      backgroundColor: colors.bg,
+    },
+    input: {
+      flex: 1,
+      maxHeight: 120,
+      minHeight: 40,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      borderRadius: 20,
+      paddingHorizontal: 14,
+      paddingTop: 10,
+      paddingBottom: 10,
+      fontSize: 15,
+      color: colors.text,
+    },
+    sendBtn: {
+      marginLeft: 8,
+      backgroundColor: colors.primary,
+      borderRadius: 20,
+      paddingHorizontal: 18,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    sendBtnDisabled: { backgroundColor: colors.primaryDisabled },
+    sendText: { color: colors.onPrimary, fontWeight: '600', fontSize: 15 },
+  });
+}
