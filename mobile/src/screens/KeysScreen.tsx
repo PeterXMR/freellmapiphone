@@ -32,6 +32,13 @@ import type { Platform as ProviderPlatform } from '../../../shared/types';
 import { getDb } from '../adapters/sqlite/db-shim';
 import { encrypt, decrypt, maskKey, forgetSecret } from '../adapters/keystore/crypto-shim';
 import { getAllProviders } from '../../../server/src/providers/index';
+// Reuse the upstream health service: checkKeyHealth decrypts the key (crypto-shim),
+// calls provider.validateKey() over global fetch (expo/fetch), and writes status +
+// last_checked_at back to api_keys through the sqlite facade — matching the web
+// dashboard's POST /api/health/check/:id.
+import { checkKeyHealth } from '../../../server/src/services/health';
+import { useTheme } from '../theme/ThemeProvider';
+import type { Palette } from '../theme/palette';
 
 interface KeyRow {
   id: number;
@@ -69,6 +76,8 @@ function listKeys(): KeyRow[] {
 }
 
 export default function KeysScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const qc = useQueryClient();
   const providers = useMemo(listProviders, []);
   const [selected, setSelected] = useState<ProviderPlatform>(providers[0]?.platform ?? 'groq');
@@ -135,6 +144,16 @@ export default function KeysScreen() {
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS_QUERY }),
   });
 
+  // Test a key: runs the upstream health check (validateKey) in-process, which
+  // updates status + last_checked_at; refresh the list so the dot/label reflect it.
+  const checkKey = useMutation({
+    mutationFn: (id: number) => checkKeyHealth(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS_QUERY }),
+    onError: (err: unknown) => {
+      Alert.alert('Could not test key', err instanceof Error ? err.message : String(err));
+    },
+  });
+
   const selectedIsKeyless = providers.find(p => p.platform === selected)?.keyless === true;
 
   const onAdd = () => {
@@ -184,7 +203,7 @@ export default function KeysScreen() {
               ? `${providerName(selected)} — no key needed, just tap Add`
               : `${providerName(selected)} API key`
           }
-          placeholderTextColor="#9ca3af"
+          placeholderTextColor={colors.textFaint}
           autoCapitalize="none"
           autoCorrect={false}
           secureTextEntry
@@ -204,7 +223,7 @@ export default function KeysScreen() {
       <Text style={[styles.sectionTitle, styles.spacer]}>Your keys</Text>
 
       {keysQuery.isLoading ? (
-        <ActivityIndicator style={{ marginTop: 24 }} />
+        <ActivityIndicator style={{ marginTop: 24 }} color={colors.textMuted} />
       ) : keysQuery.isError ? (
         <Text style={styles.errorText}>
           Failed to load keys: {(keysQuery.error as Error)?.message}
@@ -214,11 +233,11 @@ export default function KeysScreen() {
       ) : (
         keysQuery.data!.map(row => (
           <View key={row.id} style={styles.keyCard}>
-            <View style={styles.keyCardMain}>
+            <View>
               <Text style={styles.keyPlatform}>{providerName(row.platform)}</Text>
               <Text style={styles.keyMasked}>{masked(row)}</Text>
               <View style={styles.statusRow}>
-                <View style={[styles.statusDot, statusStyle(row.status)]} />
+                <View style={[styles.statusDot, { backgroundColor: statusColor(row.status, colors) }]} />
                 <Text style={styles.statusText}>{row.status}</Text>
               </View>
             </View>
@@ -227,6 +246,17 @@ export default function KeysScreen() {
                 value={row.enabled === 1}
                 onValueChange={v => toggleKey.mutate({ id: row.id, enabled: v })}
               />
+              <Pressable
+                onPress={() => checkKey.mutate(row.id)}
+                disabled={checkKey.isPending && checkKey.variables === row.id}
+                hitSlop={8}
+              >
+                {checkKey.isPending && checkKey.variables === row.id ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Text style={styles.testText}>Test</Text>
+                )}
+              </Pressable>
               <Pressable onPress={() => deleteKey.mutate(row.id)} hitSlop={8}>
                 <Text style={styles.deleteText}>Delete</Text>
               </Pressable>
@@ -238,76 +268,85 @@ export default function KeysScreen() {
   );
 }
 
-function statusStyle(status: string) {
+function statusColor(status: string, colors: Palette): string {
   switch (status) {
     case 'healthy':
-      return { backgroundColor: '#16a34a' };
+      return colors.success;
     case 'rate_limited':
-      return { backgroundColor: '#f59e0b' };
+      return colors.warning;
     case 'invalid':
     case 'error':
-      return { backgroundColor: '#dc2626' };
+      return colors.danger;
     default:
-      return { backgroundColor: '#9ca3af' };
+      return colors.textFaint;
   }
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
-  content: { padding: 16 },
-  sectionTitle: { fontSize: 13, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 },
-  spacer: { marginTop: 28 },
-  providerGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 12, marginBottom: 12 },
-  chip: {
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    backgroundColor: '#f3f4f6',
-    margin: 4,
-  },
-  chipSelected: { backgroundColor: '#2563eb' },
-  chipText: { fontSize: 13, color: '#374151' },
-  chipTextSelected: { color: '#ffffff', fontWeight: '600' },
-  addRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
-  input: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 44,
-    fontSize: 15,
-    color: '#111827',
-  },
-  addBtn: {
-    marginLeft: 8,
-    backgroundColor: '#2563eb',
-    borderRadius: 10,
-    paddingHorizontal: 18,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addBtnDisabled: { backgroundColor: '#93c5fd' },
-  addBtnText: { color: '#ffffff', fontWeight: '600', fontSize: 15 },
-  emptyText: { color: '#9ca3af', marginTop: 16, fontSize: 14 },
-  errorText: { color: '#dc2626', marginTop: 16, fontSize: 14 },
-  keyCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 10,
-  },
-  keyCardMain: { flex: 1 },
-  keyPlatform: { fontSize: 15, fontWeight: '600', color: '#111827' },
-  keyMasked: { fontSize: 13, color: '#6b7280', marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
-  statusRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
-  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  statusText: { fontSize: 12, color: '#6b7280' },
-  keyCardActions: { alignItems: 'center', marginLeft: 12 },
-  deleteText: { color: '#dc2626', fontSize: 12, marginTop: 10 },
-});
+function makeStyles(colors: Palette) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.bg },
+    content: { padding: 16 },
+    sectionTitle: { fontSize: 13, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+    spacer: { marginTop: 28 },
+    providerGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 12, marginBottom: 12 },
+    chip: {
+      paddingVertical: 7,
+      paddingHorizontal: 12,
+      borderRadius: 16,
+      backgroundColor: colors.surface,
+      margin: 4,
+    },
+    chipSelected: { backgroundColor: colors.primary },
+    chipText: { fontSize: 13, color: colors.textStrong },
+    chipTextSelected: { color: colors.onPrimary, fontWeight: '600' },
+    addRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+    input: {
+      flex: 1,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      height: 44,
+      fontSize: 15,
+      color: colors.text,
+    },
+    addBtn: {
+      marginLeft: 8,
+      backgroundColor: colors.primary,
+      borderRadius: 10,
+      paddingHorizontal: 18,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    addBtnDisabled: { backgroundColor: colors.primaryDisabled },
+    addBtnText: { color: colors.onPrimary, fontWeight: '600', fontSize: 15 },
+    emptyText: { color: colors.textFaint, marginTop: 16, fontSize: 14 },
+    errorText: { color: colors.danger, marginTop: 16, fontSize: 14 },
+    keyCard: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 12,
+      padding: 14,
+      marginTop: 10,
+    },
+    keyPlatform: { fontSize: 15, fontWeight: '600', color: colors.text },
+    keyMasked: { fontSize: 13, color: colors.textMuted, marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+    statusRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+    statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
+    statusText: { fontSize: 12, color: colors.textMuted },
+    // Switch → Test → Delete in one horizontal row below the key info, spaced out
+    // with a divider above so each control is an easy, separate tap target.
+    keyCardActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 14,
+      paddingTop: 12,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      gap: 28,
+    },
+    testText: { color: colors.primary, fontSize: 15, fontWeight: '600' },
+    deleteText: { color: colors.danger, fontSize: 15, fontWeight: '600' },
+  });
+}
