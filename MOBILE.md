@@ -16,6 +16,31 @@ and the CI that guards them.**
 > New to the app? Build/sign/install lives in [`mobile/docs/BUILD.md`](mobile/docs/BUILD.md);
 > the Node proofs behind each seam live in [`mobile/verification/`](mobile/verification/README.md).
 
+## Upstream source — vendored at root, now also a pinned submodule
+
+Today the reused upstream code (`server/src`, `shared`, …) lives at the **repo
+root**: this repo is a clone of upstream with `mobile/` layered on top, and the app
+bundles that root tree directly (see [seams](#adapter-seams)).
+
+A migration is in progress to consume upstream as a **version-pinned dependency**
+instead of a whole-tree merge. Step one is already here: upstream is mounted as a
+git submodule at [`vendor/freellmapi`](vendor/freellmapi), pinned to the exact
+commit the root tree currently mirrors (`2f04a63` — `v0.3.0+55`, the merge-base of
+`main` and `upstream/main`).
+
+**It is inert.** `mobile/metro.config.js` blockLists `vendor/freellmapi`, so the
+bundle still resolves everything from the root tree — pinning it changes nothing
+about what ships. It exists so the next PR can repoint Metro at it (the *cutover*),
+after which an update bot bumps the pin once per upstream **release** (`v0.x`).
+
+Clone or refresh with the submodule:
+
+```bash
+git clone --recurse-submodules https://github.com/PeterXMR/freellmapiphone.git
+# already cloned:
+git submodule update --init vendor/freellmapi
+```
+
 ## Merge runbook
 
 ```bash

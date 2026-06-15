@@ -36,6 +36,18 @@ function isUpstreamOrigin(originModulePath) {
 const config = getDefaultConfig(projectRoot);
 
 config.watchFolders = [repoRoot];
+// Keep the second upstream copy under vendor/freellmapi (the git submodule —
+// the version-pinned source the update bot bumps; not yet wired into the bundle,
+// see the PR-2 cutover) OUT of Metro's crawl. watchFolders is the whole repo
+// root, so without this Metro would index vendor/freellmapi/package.json (name
+// "freellmapi") and its workspace package.jsons alongside the identically-named
+// root ones → a Haste-map naming collision that aborts the bundle. Until cutover
+// the app still resolves all upstream code from the root tree; the submodule is
+// inert. Drop this block in PR-2 when watchFolders/resolveRequest move to it.
+const vendorSubmodule = /[\\/]vendor[\\/]freellmapi[\\/].*/;
+config.resolver.blockList = config.resolver.blockList
+  ? [].concat(config.resolver.blockList, vendorSubmodule)
+  : vendorSubmodule;
 // Metro needs both the mobile app's node_modules AND react-native's nested
 // node_modules — RN ships some of its own runtime deps (@react-native/
 // virtualized-lists, etc.) inside its package rather than hoisted. With

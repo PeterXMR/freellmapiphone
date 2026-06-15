@@ -43,6 +43,11 @@ jobs:
       EXPO_NO_TELEMETRY: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Fetch vendor/freellmapi (the pinned upstream submodule). Inert until
+          # the PR-2 cutover — Metro blockLists it — but checking it out here
+          # proves the submodule mechanics work in CI before anything depends on it.
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:

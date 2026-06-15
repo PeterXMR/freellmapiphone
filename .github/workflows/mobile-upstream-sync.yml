@@ -38,6 +38,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history so the merge has a real base
+          submodules: recursive # fetch the pinned upstream submodule (inert pre-cutover)
 
       - name: Merge upstream/main
         id: merge
