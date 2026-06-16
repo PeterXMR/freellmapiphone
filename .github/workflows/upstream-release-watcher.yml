@@ -1,0 +1,138 @@
+# Upstream release watcher — the submodule update bot (PR 3/3).
+#
+# Replaces the old mobile-upstream-sync.yml (which ran `git merge upstream/main`
+# on a whole-tree clone — gone since the submodule cutover). Upstream is now the
+# pinned git submodule at vendor/freellmapi; an "update" is a pin bump, and this
+# job is what proposes it.
+#
+# What it does, once a week (and on demand):
+#   1. Fetch upstream's tags through the submodule's origin (== upstream).
+#   2. Find the highest semver release tag.
+#   3. If that tag is strictly AHEAD of the current pin (a fast-forward along
+#      upstream history — never a sideways/older move), check the submodule out
+#      at that tag and open ONE pull request bumping the pin.
+#   4. A human reviews and merges. mobile-ci.yml runs the adapter-seam gates on
+#      the PR (it triggers on changes to `vendor/freellmapi`), so the bump is
+#      proved safe before merge. See ../../MOBILE.md → "Update runbook".
+#
+# Cadence note: we track release TAGS, not upstream `main` HEAD — so the fork
+# moves one reviewed step per upstream release, not on every upstream commit.
+# This is deliberately NOT Renovate's gitSubmodules manager: that bumps to the
+# latest commit on a branch (a HEAD/digest update) and has no tag/semver
+# awareness, which is the exact "track HEAD" model the submodule design avoids.
+name: upstream-release-watcher
+
+on:
+  schedule:
+    # Mondays 06:00 UTC. Idempotent: re-running with a release already proposed
+    # updates the existing PR branch instead of opening a duplicate.
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  propose-upstream-bump:
+    name: Propose upstream release bump
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Full history so `git merge-base --is-ancestor` can walk between the
+          # current submodule pin and the new tag's commit. A shallow clone
+          # (the default) lacks that history and the ancestor check silently fails.
+          fetch-depth: 0
+
+      - name: Find the latest upstream release tag
+        id: check
+        working-directory: vendor/freellmapi
+        run: |
+          set -euo pipefail
+          # The submodule's origin is upstream (see .gitmodules), so its tags
+          # ARE the upstream release tags.
+          git fetch --tags --quiet origin
+
+          current_sha="$(git rev-parse HEAD)"
+          # Human-readable label for the pin we're on (e.g. v0.3.0-55-gabc123).
+          current_desc="$(git describe --tags --always)"
+          # Highest semver tag, v-prefixed (v0.3.0 > v0.2.8 under `sort -V`).
+          latest_tag="$(git tag --list 'v*' | sort -V | tail -1)"
+          latest_sha="$(git rev-list -n1 "refs/tags/${latest_tag}")"
+
+          echo "current pin : ${current_sha} (${current_desc})"
+          echo "latest tag  : ${latest_tag} (${latest_sha})"
+
+          changed=false
+          # Bump ONLY when the latest tag is a strict fast-forward from our pin:
+          # current must be an ancestor of the tag, and not equal to it. This
+          # guarantees forward-only movement and refuses a tag cut from a branch
+          # that doesn't contain our current history (which could silently drop
+          # commits we already ship, e.g. a backported security fix).
+          if [ "${current_sha}" != "${latest_sha}" ] \
+             && git merge-base --is-ancestor "${current_sha}" "${latest_sha}"; then
+            changed=true
+          fi
+
+          {
+            echo "changed=${changed}"
+            echo "from_desc=${current_desc}"
+            echo "to_tag=${latest_tag}"
+            echo "to_sha=${latest_sha}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "${changed}" = "true" ]; then
+            git checkout --quiet "refs/tags/${latest_tag}"
+            echo "::notice::Proposing bump ${current_desc} -> ${latest_tag}"
+          else
+            echo "::notice::No newer upstream release ahead of ${current_desc}; nothing to do."
+          fi
+
+      - name: Stage the bumped submodule pin
+        if: steps.check.outputs.changed == 'true'
+        run: git add vendor/freellmapi
+
+      - name: Open the pin-bump pull request
+        if: steps.check.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          # A PAT (UPSTREAM_SYNC_TOKEN) lets the bot's PR trigger mobile-ci —
+          # PRs opened with the default GITHUB_TOKEN do NOT start other
+          # workflows. Falls back to GITHUB_TOKEN if the secret is absent (the
+          # PR still opens; re-run mobile-ci by closing/reopening it). See
+          # MOBILE.md → "The update bot".
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: chore/upstream-release-bump
+          delete-branch: true
+          commit-message: |
+            chore(upstream): bump vendor/freellmapi to ${{ steps.check.outputs.to_tag }}
+
+            Pin bump ${{ steps.check.outputs.from_desc }} -> ${{ steps.check.outputs.to_tag }}
+            (${{ steps.check.outputs.to_sha }}). Opened by upstream-release-watcher.
+          title: 'chore(upstream): bump submodule to ${{ steps.check.outputs.to_tag }}'
+          body: |
+            ## Upstream release bump
+
+            The upstream [`freellmapi`](https://github.com/tashfeenahmed/freellmapi)
+            submodule has a newer release tag.
+
+            | | |
+            | --- | --- |
+            | **From** | `${{ steps.check.outputs.from_desc }}` |
+            | **To** | **`${{ steps.check.outputs.to_tag }}`** (`${{ steps.check.outputs.to_sha }}`) |
+
+            This only moves the `vendor/freellmapi` pin — no upstream file is
+            edited. `mobile-ci.yml` runs the adapter-seam gates (provider
+            portability, router/fallback, the SQLite facade contract, schema +
+            migrations, crypto parity, and the real `expo export` bundle) on this
+            PR. **If those pass, the seams still hold — review and merge.** If one
+            fails, the new upstream broke a seam; the failing check names which,
+            and the fix is in the adapter, never upstream. See
+            [`MOBILE.md`](../blob/main/MOBILE.md) → "Adapter seams".
+
+            🤖 Opened by `upstream-release-watcher`.
+          labels: |
+            upstream-sync
+            dependencies

@@ -59,9 +59,7 @@ If a step **fails**, the new upstream broke one of the seams below — the faili
 step tells you which; fix the relevant adapter (never edit upstream). If it all
 passes, commit the bumped pin and open a PR.
 
-You don't have to do this by hand: an **update bot** (added in a follow-up PR)
-opens the pin-bump PR per upstream release, and [`mobile-ci.yml`](#ci-guards) runs
-this exact verify + bundle on it.
+You don't have to do this by hand — see [the update bot](#the-update-bot) below.
 
 ## Adapter seams
 
@@ -115,5 +113,39 @@ local/manual step — see [`mobile/docs/BUILD.md`](mobile/docs/BUILD.md).
 
 > The old `mobile-upstream-sync.yml` (which ran `git merge upstream/main`) was
 > removed in the submodule cutover — there is no tree to merge anymore. Its job is
-> replaced by the update bot that bumps the `vendor/freellmapi` pin. Upstream's own
-> `ci.yml`/`docker.yml` are gone too (they lived in the deleted root tree).
+> replaced by [the update bot](#the-update-bot) that bumps the `vendor/freellmapi`
+> pin. Upstream's own `ci.yml`/`docker.yml` are gone too (they lived in the
+> deleted root tree).
+
+### The update bot
+
+[`upstream-release-watcher.yml`](.github/workflows/upstream-release-watcher.yml)
+is the automatic half of the [update runbook](#update-runbook). Weekly (and on
+`workflow_dispatch`), it:
+
+1. fetches upstream's tags through the submodule's `origin` (which **is**
+   upstream — see [`.gitmodules`](.gitmodules)),
+2. picks the highest semver release tag, and
+3. if that tag is a **strict fast-forward** from the current pin (the pin is an
+   ancestor of the tag, never a sideways/older move — so a tag cut from a branch
+   that lacks commits we already ship is refused), opens **one** PR bumping the
+   `vendor/freellmapi` pin to it.
+
+A human reviews and merges. The bump only moves the gitlink — no upstream file is
+touched — and [`mobile-ci.yml`](#ci-guards) runs the full seam gate on the PR, so
+a merge is only ever a merge of a *green* bump.
+
+It tracks release **tags**, not upstream `main` HEAD: the fork advances one
+reviewed step per upstream release, not per upstream commit. (This is why it is a
+~40-line Action and not Renovate's `gitSubmodules` manager — that bumps a
+submodule to the latest commit on a branch, with no tag/semver awareness, which is
+the "track HEAD" model the submodule design exists to avoid.)
+
+**One-time setup — let the bot's PR trigger CI.** A PR opened with the default
+`GITHUB_TOKEN` does **not** start other workflows (GitHub's anti-recursion rule),
+so `mobile-ci` would not auto-run on the bump. To fix that, add a repo secret
+`UPSTREAM_SYNC_TOKEN` — a fine-grained PAT with **Contents: write** and
+**Pull requests: write** on this repo. The watcher uses it to open the PR, which
+then triggers `mobile-ci` normally. Without the secret the bot still works and
+opens the PR (it falls back to `GITHUB_TOKEN`); you just have to kick `mobile-ci`
+yourself by closing and reopening the PR.
