@@ -14,7 +14,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import type { ChatMessage } from '../../../shared/types';
+import type { ChatMessage } from '../../../vendor/freellmapi/shared/types';
 import { streamComplete, type RoutedVia } from '../core/bridge';
 import { useTheme } from '../theme/ThemeProvider';
 import type { Palette } from '../theme/palette';

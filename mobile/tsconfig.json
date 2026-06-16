@@ -6,8 +6,8 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "paths": {
-      "@upstream/*": ["../server/src/*"],
-      "@shared/*": ["../shared/*"]
+      "@upstream/*": ["../vendor/freellmapi/server/src/*"],
+      "@shared/*": ["../vendor/freellmapi/shared/*"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"]

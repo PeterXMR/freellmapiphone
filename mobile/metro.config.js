@@ -1,12 +1,13 @@
-// Metro config for the standalone mobile app living inside the freellmapi clone.
+// Metro config for the standalone mobile app. The reused upstream code is the
+// pinned git submodule at vendor/freellmapi (see MOBILE.md).
 //
 // Two jobs:
-//   1. watchFolders → repo root, so Metro can bundle the reused upstream code
-//      under ../server/src and ../shared (imported by relative path).
+//   1. watchFolders → the submodule's server/ + shared/, so Metro can bundle the
+//      reused upstream code under vendor/freellmapi/server/src and
+//      vendor/freellmapi/shared (imported by relative path).
 //   2. resolveRequest → redirect the Node-only upstream modules
-//      (db/index.js, lib/crypto.js, lib/proxy.js) to mobile adapters, so
-//      upstream source files stay byte-identical and `git merge upstream/main`
-//      never conflicts.
+//      (db/index.js, lib/crypto.js, lib/proxy.js) to mobile adapters, so the
+//      vendored upstream source stays byte-identical to upstream.
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
@@ -16,7 +17,7 @@ const repoRoot = path.resolve(projectRoot, '..');
 // guard the suffix regexes below would hijack any module whose path happens to
 // end in db/index or lib/crypto — including node_modules internals and future
 // mobile-local files.
-const upstreamSrcRoot = path.join(repoRoot, 'server', 'src') + path.sep;
+const upstreamSrcRoot = path.join(repoRoot, 'vendor', 'freellmapi', 'server', 'src') + path.sep;
 // The reused upstream TS source (server/src + shared) is authored in NodeNext
 // ESM style: every relative import carries an explicit `.js` extension that is
 // understood to map to the `.ts` source on disk (e.g. `../providers/index.js`
@@ -26,8 +27,8 @@ const upstreamSrcRoot = path.join(repoRoot, 'server', 'src') + path.sep;
 // via sourceExts (.ts/.tsx). Scoped to these roots so genuine `.js` files in
 // node_modules are never touched.
 const upstreamCodeRoots = [
-  path.join(repoRoot, 'server', 'src') + path.sep,
-  path.join(repoRoot, 'shared') + path.sep,
+  path.join(repoRoot, 'vendor', 'freellmapi', 'server', 'src') + path.sep,
+  path.join(repoRoot, 'vendor', 'freellmapi', 'shared') + path.sep,
 ];
 function isUpstreamOrigin(originModulePath) {
   return !!originModulePath && upstreamCodeRoots.some(root => originModulePath.startsWith(root));
@@ -35,19 +36,14 @@ function isUpstreamOrigin(originModulePath) {
 
 const config = getDefaultConfig(projectRoot);
 
-config.watchFolders = [repoRoot];
-// Keep the second upstream copy under vendor/freellmapi (the git submodule —
-// the version-pinned source the update bot bumps; not yet wired into the bundle,
-// see the PR-2 cutover) OUT of Metro's crawl. watchFolders is the whole repo
-// root, so without this Metro would index vendor/freellmapi/package.json (name
-// "freellmapi") and its workspace package.jsons alongside the identically-named
-// root ones → a Haste-map naming collision that aborts the bundle. Until cutover
-// the app still resolves all upstream code from the root tree; the submodule is
-// inert. Drop this block in PR-2 when watchFolders/resolveRequest move to it.
-const vendorSubmodule = /[\\/]vendor[\\/]freellmapi[\\/].*/;
-config.resolver.blockList = config.resolver.blockList
-  ? [].concat(config.resolver.blockList, vendorSubmodule)
-  : vendorSubmodule;
+// The reused upstream source — server/src + shared from the pinned submodule at
+// vendor/freellmapi. Scoped to these two dirs (not all of vendor/freellmapi) so
+// Metro never crawls the submodule's node_modules / client / desktop workspaces
+// (which would slow the crawl and risk Haste-map name collisions).
+config.watchFolders = [
+  path.join(repoRoot, 'vendor', 'freellmapi', 'server'),
+  path.join(repoRoot, 'vendor', 'freellmapi', 'shared'),
+];
 // Metro needs both the mobile app's node_modules AND react-native's nested
 // node_modules — RN ships some of its own runtime deps (@react-native/
 // virtualized-lists, etc.) inside its package rather than hoisted. With

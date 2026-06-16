@@ -1,9 +1,10 @@
 # Node verification suite
 
 These tests prove the **reused upstream logic** the on-device app depends on, by
-running this repo's *own* vendored `server/src` + `mobile/src` code in plain Node —
-no Android device or Expo install required. They are the evidence behind the
-"verified (Node)" markers in [`MOBILE-PLAN.md`](../../MOBILE-PLAN.md).
+running the pinned upstream submodule's `server/src` (at `vendor/freellmapi`) +
+`mobile/src` code in plain Node — no Android device or Expo install required. They
+are the evidence behind the "verified (Node)" markers in
+[`MOBILE-PLAN.md`](../../MOBILE-PLAN.md).
 
 > They verify **logic**, not the on-device **runtime**. expo-sqlite,
 > expo-secure-store, expo/fetch streaming, and Metro aliasing still need a real
@@ -11,28 +12,29 @@ no Android device or Expo install required. They are the evidence behind the
 
 ## Local-run prerequisite
 
-Until `npm install` succeeds in this repo, borrow the native `better-sqlite3`
-(ABI-matched) and `tsx` from a sibling `freellmapi` checkout via a **gitignored**
-symlink at the repo root:
+The test oracle (`better-sqlite3`) is resolved two ways, so install both:
 
 ```bash
-ln -sfn ../freellmapi/node_modules ./node_modules
+(cd ../vendor/freellmapi && npm install)   # upstream workspace deps — what the
+                                           # router/portability suites' upstream code
+                                           # resolves (better-sqlite3, undici, …)
+npm install                                # from mobile/: app deps + the better-sqlite3
+                                           # devDep the facade/schema suites resolve
 ```
-
-(Once this repo can `npm install` on a working network, delete the symlink and
-install normally — the tests are unchanged.)
 
 ## Run
 
+From `mobile/`:
+
 ```bash
-DEV_MODE=true NODE_ENV=test npx tsx mobile/verification/provider-portability.test.mts
-DEV_MODE=true NODE_ENV=test npx tsx mobile/verification/router-fallback.test.mts
-DEV_MODE=true NODE_ENV=test npx tsx mobile/verification/facade.contract.mts
-DEV_MODE=true NODE_ENV=test npx tsx mobile/verification/schema.test.mts
-npx tsx mobile/src/adapters/keystore/crypto-shim.check.mts
+DEV_MODE=true NODE_ENV=test npm run verify:portability
+DEV_MODE=true NODE_ENV=test npm run verify:router
+DEV_MODE=true NODE_ENV=test npm run verify:facade
+DEV_MODE=true NODE_ENV=test npm run verify:schema
+npx tsx src/adapters/keystore/crypto-shim.check.mts
 ```
 
-## What each proves (all against this repo's own code)
+## What each proves (all against the upstream submodule + mobile/src)
 
 | Test | Proves |
 | --- | --- |

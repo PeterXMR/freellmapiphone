@@ -19,15 +19,15 @@ import './fetch';
 
 // Upstream + shared modules are imported by RELATIVE path (not the tsconfig
 // @upstream/@shared aliases): Metro resolves these through watchFolders (the
-// repo root, see mobile/metro.config.js) without any extra alias config, so
-// the bridge stays runtime-resolvable even though metro.config.js is owned by
-// another agent and may not register the TS path aliases.
+// repo root, see mobile/metro.config.js) into the pinned upstream submodule at
+// vendor/freellmapi, without any extra alias config — so the bridge stays
+// runtime-resolvable without registering the TS path aliases in Metro.
 import type {
   ChatMessage,
   ChatCompletionChunk,
   ChatToolDefinition,
   ChatToolChoice,
-} from '../../../shared/types';
+} from '../../../vendor/freellmapi/shared/types';
 
 import {
   routeRequest,
@@ -36,7 +36,7 @@ import {
   recordSuccess,
   type RouteResult,
   type ResolvedChain,
-} from '../../../server/src/services/router';
+} from '../../../vendor/freellmapi/server/src/services/router';
 import {
   recordRequest,
   recordTokens,
@@ -44,14 +44,14 @@ import {
   getCooldownDurationForLimit,
   PAYMENT_REQUIRED_COOLDOWN_MS,
   MODEL_FORBIDDEN_COOLDOWN_MS,
-} from '../../../server/src/services/ratelimit';
+} from '../../../vendor/freellmapi/server/src/services/ratelimit';
 // Dependency-light upstream lib modules (no Node/Express imports) — reused
 // directly so content normalization and tool-argument repair stay
 // single-sourced with the server.
-import { contentToString } from '../../../server/src/lib/content';
-import { repairToolArguments, toolSchemaMap } from '../../../server/src/lib/tool-args';
-import { pruneRequestAnalytics } from '../../../server/src/services/request-retention';
-import { sanitizeProviderErrorMessage } from '../../../server/src/lib/error-redaction';
+import { contentToString } from '../../../vendor/freellmapi/server/src/lib/content';
+import { repairToolArguments, toolSchemaMap } from '../../../vendor/freellmapi/server/src/lib/tool-args';
+import { pruneRequestAnalytics } from '../../../vendor/freellmapi/server/src/services/request-retention';
+import { sanitizeProviderErrorMessage } from '../../../vendor/freellmapi/server/src/lib/error-redaction';
 
 // Error-classification helpers. proxy.ts ALSO exports these, but that module
 // top-level imports Express, zod, embeddings, and context-handoff — none of

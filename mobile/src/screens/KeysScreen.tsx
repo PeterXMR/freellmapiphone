@@ -23,7 +23,7 @@ import {
 } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
-import type { Platform as ProviderPlatform } from '../../../shared/types';
+import type { Platform as ProviderPlatform } from '../../../vendor/freellmapi/shared/types';
 // Mobile code imports the mobile adapters DIRECTLY. The Metro redirect in
 // mobile/metro.config.js is scoped to imports originating inside upstream
 // server/src files; it exists so upstream modules' internal `../db/index.js` /
@@ -31,12 +31,12 @@ import type { Platform as ProviderPlatform } from '../../../shared/types';
 // upstream source. Either path yields the same module instance.
 import { getDb } from '../adapters/sqlite/db-shim';
 import { encrypt, decrypt, maskKey, forgetSecret } from '../adapters/keystore/crypto-shim';
-import { getAllProviders } from '../../../server/src/providers/index';
+import { getAllProviders } from '../../../vendor/freellmapi/server/src/providers/index';
 // Reuse the upstream health service: checkKeyHealth decrypts the key (crypto-shim),
 // calls provider.validateKey() over global fetch (expo/fetch), and writes status +
 // last_checked_at back to api_keys through the sqlite facade — matching the web
 // dashboard's POST /api/health/check/:id.
-import { checkKeyHealth } from '../../../server/src/services/health';
+import { checkKeyHealth } from '../../../vendor/freellmapi/server/src/services/health';
 import { useTheme } from '../theme/ThemeProvider';
 import type { Palette } from '../theme/palette';
 
